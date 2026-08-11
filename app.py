@@ -64,8 +64,8 @@ else:
     with upload_col2:
         doubt_file = st.file_uploader("2. Upload Doubt Timetable", type=["xlsx", "xls"], key="doubt_file")
 
-# --- Helper Function: Parse Timetable Sheet ---
-def parse_timetable(uploaded_file):
+# --- Helper Function: Parse Class Timetable ---
+def parse_class_timetable(uploaded_file):
     df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
     
     days_map = {
@@ -125,7 +125,6 @@ def parse_timetable(uploaded_file):
                         valid_classes[(subj_str, batch_str)] = 0
                     valid_classes[(subj_str, batch_str)] += 1
         
-        # Correct Leave Logic & Free Slot Math
         leave_days_list = []
         if total_classes == 0:
             status = "Not Allotted"
@@ -135,8 +134,6 @@ def parse_timetable(uploaded_file):
             status = "Active"
             leave_days_list = [day for day, cnt in day_counts.items() if cnt == 0]
             leave_text = ", ".join(leave_days_list) if leave_days_list else "None"
-            
-            # Deduct 8 slots from total weekly capacity for every leave day
             effective_capacity = 48 - (len(leave_days_list) * 8)
             
         net_free_slots = effective_capacity - total_classes
@@ -165,6 +162,39 @@ def parse_timetable(uploaded_file):
 
     return pd.DataFrame(records), teacher_stats, total_raw_teachers, total_raw_assigned_slots
 
+# --- Helper Function: Parse Doubt Timetable ---
+def parse_doubt_timetable(uploaded_file):
+    df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
+    doubt_counts = {}
+    total_doubt_slots = 0
+    
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    
+    for index, row in df.iterrows():
+        # Ensure we look at the column named exactly "Teacher's Name"
+        if "Teacher's Name" in df.columns:
+            teacher_name = str(row["Teacher's Name"]).strip()
+        else:
+            # Fallback in case header name changes
+            teacher_name = str(row.iloc[0]).strip()
+            
+        if teacher_name == 'nan' or not teacher_name or teacher_name == "Teacher's Name":
+            continue
+            
+        slots_count = 0
+        for day in days:
+            if day in df.columns:
+                slots_str = str(row[day]).strip()
+                if slots_str != 'nan' and slots_str:
+                    # Split by comma (e.g., "D1, D2" -> 2 slots)
+                    slots = [s.strip() for s in slots_str.split(',')]
+                    slots = [s for s in slots if s] 
+                    slots_count += len(slots)
+                    
+        doubt_counts[teacher_name] = slots_count
+        total_doubt_slots += slots_count
+        
+    return doubt_counts, total_doubt_slots
 
 # --- Main Processing Logic ---
 if class_file is not None:
@@ -173,20 +203,19 @@ if class_file is not None:
     else:
         st.success("Timetable(s) uploaded successfully! Processing data...")
         
-        df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_timetable(class_file)
+        df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(class_file)
         
-        # Process Optional Doubt File
+        # Process Doubt File
         doubt_slots_map = {}
         total_doubt_slots = 0
-        if doubt_file is not None:
-            _, doubt_stats, _, total_doubt_slots = parse_timetable(doubt_file)
-            for teacher, info in doubt_stats.items():
-                doubt_slots_map[teacher] = info['Total_Classes']
+        if mode == "Class + Doubt Timetables" and doubt_file is not None:
+            doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
                 
         # Build Combined Summary Table
         summary_rows = []
         for teacher, info in class_teacher_stats.items():
             class_lecs = info['Total_Classes']
+            # Safely fetch doubt slots for this specific teacher
             doubt_lecs = doubt_slots_map.get(teacher, 0)
             total_workload = class_lecs + doubt_lecs
             
@@ -237,7 +266,6 @@ if class_file is not None:
         
         st.subheader("📋 Faculty Workload & True Utilization Summary")
         
-        # Hide Doubt columns if in Class Only mode for a cleaner UI
         if mode == "Class Timetable Only":
             display_df = df_summary.drop(columns=['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'])
             st.dataframe(display_df.style.format({
@@ -292,7 +320,6 @@ if class_file is not None:
                 for r in dataframe_to_rows(df_export, index=False, header=True):
                     ws_summary.append(r)
                 apply_styling(ws_summary)
-                # Format Percentage Column (F for Class Only)
                 for cell in ws_summary['F'][1:]:
                     cell.number_format = '0.0%'
                 rule = ColorScaleRule(start_type='min', start_color='F8696B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='63BE7B')
@@ -302,7 +329,6 @@ if class_file is not None:
                 for r in dataframe_to_rows(df_export, index=False, header=True):
                     ws_summary.append(r)
                 apply_styling(ws_summary)
-                # Format Percentage Columns (I & J for Class + Doubt)
                 for col_letter in ['I', 'J']:
                     for cell in ws_summary[col_letter][1:]:
                         cell.number_format = '0.0%'
