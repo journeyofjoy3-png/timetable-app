@@ -11,7 +11,6 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 st.set_page_config(page_title="Faculty Timetable Portal", layout="wide")
 
 # --- Authentication ---
-# Change these to your preferred login details!
 USER_ID = "admin"
 PASSWORD = "matrix2026"
 
@@ -30,10 +29,9 @@ if not st.session_state["authenticated"]:
         else:
             st.error("Incorrect User ID or Password. Please try again.")
     
-    # This stops the rest of the app from loading if not logged in
     st.stop()
 
-# --- Main App (Only visible after login) ---
+# --- Main App ---
 col1, col2 = st.columns([8, 1])
 with col1:
     st.title("📊 Faculty Timetable Analyzer")
@@ -42,7 +40,7 @@ with col2:
         st.session_state["authenticated"] = False
         st.rerun()
 
-st.markdown("Upload your weekly NEET faculty Excel timetable to instantly generate a structured workload analysis and dashboard.")
+st.markdown("Upload your weekly NEET faculty Excel timetable to generate a workload and leave day analysis.")
 
 # --- File Uploader ---
 uploaded_file = st.file_uploader("Upload Timetable (Excel format)", type=["xlsx", "xls"])
@@ -53,7 +51,18 @@ if uploaded_file is not None:
     # 1. Read Data 
     df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
     
+    # Define Column mappings for Days (8 slots per day)
+    days_map = {
+        "Monday": range(1, 9),
+        "Tuesday": range(9, 17),
+        "Wednesday": range(17, 25),
+        "Thursday": range(25, 33),
+        "Friday": range(33, 41),
+        "Saturday": range(41, 49)
+    }
+    
     records = []
+    leave_records = []
     total_raw_assigned_slots = 0
     total_raw_teachers = 0
     
@@ -65,14 +74,14 @@ if uploaded_file is not None:
             continue
             
         total_raw_teachers += 1
-        subject_row = df.iloc[i, 1:]
+        subject_row = df.iloc[i, :]
         
         has_batch_row = False
         if i + 1 < len(df):
             next_teacher_col = str(df.iloc[i+1, 0]).strip()
             if next_teacher_col == '' or next_teacher_col.lower() == 'nan':
                 has_batch_row = True
-                batch_row = df.iloc[i+1, 1:]
+                batch_row = df.iloc[i+1, :]
             else:
                 batch_row = pd.Series([''] * len(subject_row))
         else:
@@ -80,21 +89,39 @@ if uploaded_file is not None:
             
         valid_classes = {}
         free_slots = 0
+        total_classes = 0
+        day_counts = {day: 0 for day in days_map}
         
-        for subj, batch in zip(subject_row, batch_row):
-            subj_str = str(subj).strip()
-            batch_str = str(batch).strip()
-            
-            is_subj_empty = (subj_str == '' or subj_str.lower() == 'nan')
-            is_batch_empty = (batch_str == '' or batch_str.lower() == 'nan')
-            
-            if is_subj_empty and is_batch_empty:
-                free_slots += 1
-            elif not is_subj_empty and not is_batch_empty:
-                total_raw_assigned_slots += 1
-                if (subj_str, batch_str) not in valid_classes:
-                    valid_classes[(subj_str, batch_str)] = 0
-                valid_classes[(subj_str, batch_str)] += 1
+        # Check Daily assignments
+        for day, cols in days_map.items():
+            for col in cols:
+                if col >= len(subject_row):
+                    continue
+                subj_str = str(subject_row.iloc[col]).strip()
+                batch_str = str(batch_row.iloc[col]).strip()
+                
+                is_subj_empty = (subj_str == '' or subj_str.lower() == 'nan')
+                is_batch_empty = (batch_str == '' or batch_str.lower() == 'nan')
+                
+                if is_subj_empty and is_batch_empty:
+                    free_slots += 1
+                elif not is_subj_empty and not is_batch_empty:
+                    total_raw_assigned_slots += 1
+                    total_classes += 1
+                    day_counts[day] += 1
+                    if (subj_str, batch_str) not in valid_classes:
+                        valid_classes[(subj_str, batch_str)] = 0
+                    valid_classes[(subj_str, batch_str)] += 1
+        
+        # Leave Logic: Teacher has classes overall, but 0 on specific days
+        leave_days = []
+        if total_classes > 0:
+            for day, count in day_counts.items():
+                if count == 0:
+                    leave_days.append(day)
+        
+        leave_text = ", ".join(leave_days) if leave_days else "None"
+        leave_records.append({'Teacher': teacher_name, 'Leave/Off Days': leave_text})
                 
         if not valid_classes:
             records.append({'Teacher': teacher_name, 'Subject': 'None', 'Batch': 'None', 'Lectures': 0, 'Free_Slots': free_slots})
@@ -110,33 +137,43 @@ if uploaded_file is not None:
             i += 1
 
     df_tidy = pd.DataFrame(records)
+    df_leaves = pd.DataFrame(leave_records)
     
     # Create Summary
     df_summary = df_tidy.groupby('Teacher').agg(
         Total_Lectures=('Lectures', 'sum'),
         Free_Slots=('Free_Slots', 'first')
     ).reset_index()
+    
+    # Merge leave data into summary
+    df_summary = pd.merge(df_summary, df_leaves, on='Teacher', how='left')
+    
     df_summary['Total_Capacity'] = 48
     df_summary['Utilization'] = df_summary['Total_Lectures'] / df_summary['Total_Capacity']
+    
+    # Reorder columns
+    df_summary = df_summary[['Teacher', 'Total_Lectures', 'Free_Slots', 'Total_Capacity', 'Utilization', 'Leave/Off Days']]
     df_summary = df_summary.sort_values(by='Total_Lectures', ascending=False)
     
     # --- Display Metrics on Web Page ---
-    st.subheader("Data Verification")
+    st.subheader("Data Verification & Quick Stats")
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Total Faculty", total_raw_teachers)
     metric_col2.metric("Total Active Lectures", total_raw_assigned_slots)
-    metric_col3.metric("Structured Lectures", df_tidy['Lectures'].sum())
+    
+    # Show how many teachers have a day off
+    faculty_on_leave = len(df_summary[df_summary['Leave/Off Days'] != 'None'])
+    metric_col3.metric("Faculty with Off-Days", faculty_on_leave)
     
     st.divider()
     
-    st.subheader("Faculty Workload Preview")
-    st.dataframe(df_summary.head(10), use_container_width=True)
+    st.subheader("Faculty Workload & Leave Preview")
+    st.dataframe(df_summary, use_container_width=True)
     
     # --- Generate Excel for Download ---
     def generate_excel(summary_df, detail_df):
         wb = Workbook()
         
-        # Styles
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="2F4F4F")
         border_side = Side(border_style="thin", color="D3D3D3")
@@ -211,7 +248,6 @@ if uploaded_file is not None:
         chart.shape = 4
         ws_dash.add_chart(chart, "B8")
         
-        # Save to memory buffer
         output = BytesIO()
         wb.save(output)
         output.seek(0)
@@ -222,6 +258,6 @@ if uploaded_file is not None:
     st.download_button(
         label="📥 Download Analyzed Excel Dashboard",
         data=excel_file,
-        file_name="Processed_Timetable.xlsx",
+        file_name="Processed_Timetable_With_Leaves.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
