@@ -45,7 +45,7 @@ with col2:
 tab1, tab2 = st.tabs(["📊 Timetable Analyzer", "📅 Schedule Calculator"])
 
 # ==========================================
-# TAB 1: TIMETABLE ANALYZER (EXISTING CODE)
+# TAB 1: TIMETABLE ANALYZER
 # ==========================================
 with tab1:
     st.markdown("Upload your weekly NEET Class Timetable and optional Doubt Timetable to analyze workload, exact leave days, and true utilization.")
@@ -257,21 +257,18 @@ with tab1:
             excel_file = generate_excel(df_summary, df_tidy, mode)
             st.download_button(label="📥 Download Complete Excel Analysis", data=excel_file, file_name="Faculty_Timetable_Analysis.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-
 # ==========================================
-# TAB 2: SCHEDULE CALCULATOR (NEW CODE)
+# TAB 2: SCHEDULE CALCULATOR
 # ==========================================
 with tab2:
-    st.markdown("Calculate syllabus timelines by providing any 3 variables to find the 4th.")
+    st.markdown("Calculate syllabus timelines by providing any 3 variables to find the 4th. You can now also factor in expected holidays or leave days!")
     
-    # Selection logic
     calc_option = st.selectbox(
         "What do you want to calculate?", 
         ["End Date", "Total Number of Lectures", "Lectures per Week", "Start Date"]
     )
     st.divider()
 
-    # Form inputs based on selection
     col_a, col_b = st.columns(2)
 
     if calc_option == "End Date":
@@ -280,10 +277,11 @@ with tab2:
             total_lec = st.number_input("Total Number of Lectures", min_value=1, value=120)
         with col_b:
             lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1, help="Total number of off-days during this period.")
             
         if st.button("Calculate End Date", type="primary"):
             weeks = total_lec / lec_per_week
-            days = weeks * 7
+            days = (weeks * 7) + leave_days
             end_date = start_date + datetime.timedelta(days=days)
             st.success(f"### 🎯 The course will end on: **{end_date.strftime('%B %d, %Y')}**")
 
@@ -293,15 +291,20 @@ with tab2:
             end_date = st.date_input("End Date", value=datetime.date.today() + datetime.timedelta(days=90))
         with col_b:
             lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
             
         if st.button("Calculate Total Lectures", type="primary"):
-            days = (end_date - start_date).days
-            if days <= 0:
+            total_calendar_days = (end_date - start_date).days
+            if total_calendar_days <= 0:
                 st.error("End date must be after Start date.")
             else:
-                weeks = days / 7
-                total_lec = weeks * lec_per_week
-                st.success(f"### 🎯 Total Lectures possible: **{int(total_lec)}** lectures")
+                effective_days = total_calendar_days - leave_days
+                if effective_days < 0:
+                    st.error("Leave days cannot exceed the total calendar days between start and end.")
+                else:
+                    weeks = effective_days / 7
+                    total_lec = weeks * lec_per_week
+                    st.success(f"### 🎯 Total Lectures possible: **{int(total_lec)}** lectures")
                 
     elif calc_option == "Lectures per Week":
         with col_a:
@@ -309,15 +312,20 @@ with tab2:
             end_date = st.date_input("End Date", value=datetime.date.today() + datetime.timedelta(days=90))
         with col_b:
             total_lec = st.number_input("Total Number of Lectures required", min_value=1, value=120)
+            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
             
         if st.button("Calculate Lectures per Week", type="primary"):
-            days = (end_date - start_date).days
-            if days <= 0:
+            total_calendar_days = (end_date - start_date).days
+            if total_calendar_days <= 0:
                 st.error("End date must be after Start date.")
             else:
-                weeks = days / 7
-                lec_per_week = total_lec / weeks
-                st.success(f"### 🎯 You need to schedule: **{lec_per_week:.1f}** lectures per week")
+                effective_days = total_calendar_days - leave_days
+                if effective_days <= 0:
+                    st.error("Effective working days must be greater than 0. Reduce leave days or extend the End Date.")
+                else:
+                    weeks = effective_days / 7
+                    lec_per_week = total_lec / weeks
+                    st.success(f"### 🎯 You need to schedule: **{lec_per_week:.1f}** lectures per week")
                 
     elif calc_option == "Start Date":
         with col_a:
@@ -325,9 +333,10 @@ with tab2:
             total_lec = st.number_input("Total Number of Lectures", min_value=1, value=120)
         with col_b:
             lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
             
         if st.button("Calculate Start Date", type="primary"):
             weeks = total_lec / lec_per_week
-            days = weeks * 7
+            days = (weeks * 7) + leave_days
             start_date = end_date - datetime.timedelta(days=days)
             st.success(f"### 🎯 The course must start on: **{start_date.strftime('%B %d, %Y')}**")
