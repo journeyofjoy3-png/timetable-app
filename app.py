@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import BarChart, Reference
@@ -31,326 +32,302 @@ if not st.session_state["authenticated"]:
     
     st.stop()
 
-# --- Main App Interface ---
+# --- Main App Interface & Logout ---
 col1, col2 = st.columns([8, 1])
 with col1:
-    st.title("📊 Faculty Timetable & Doubt Analyzer")
+    st.title("🏫 Faculty Operations Portal")
 with col2:
     if st.button("Logout"):
         st.session_state["authenticated"] = False
         st.rerun()
 
-st.markdown("Upload your weekly NEET Class Timetable and optional Doubt Timetable to analyze workload, exact leave days, and true utilization.")
+# --- Create Navigation Tabs ---
+tab1, tab2 = st.tabs(["📊 Timetable Analyzer", "📅 Schedule Calculator"])
 
-# --- Select Mode ---
-mode = st.radio(
-    "Select Analysis Mode:", 
-    ["Class Timetable Only", "Class + Doubt Timetables"], 
-    horizontal=True
-)
+# ==========================================
+# TAB 1: TIMETABLE ANALYZER (EXISTING CODE)
+# ==========================================
+with tab1:
+    st.markdown("Upload your weekly NEET Class Timetable and optional Doubt Timetable to analyze workload, exact leave days, and true utilization.")
 
-st.divider()
+    mode = st.radio(
+        "Select Analysis Mode:", 
+        ["Class Timetable Only", "Class + Doubt Timetables"], 
+        horizontal=True
+    )
+    st.divider()
 
-# --- File Uploaders ---
-class_file = None
-doubt_file = None
+    class_file = None
+    doubt_file = None
 
-if mode == "Class Timetable Only":
-    class_file = st.file_uploader("Upload Class Timetable", type=["xlsx", "xls"], key="class_only")
-else:
-    upload_col1, upload_col2 = st.columns(2)
-    with upload_col1:
-        class_file = st.file_uploader("1. Upload Class Timetable", type=["xlsx", "xls"], key="class_file")
-    with upload_col2:
-        doubt_file = st.file_uploader("2. Upload Doubt Timetable", type=["xlsx", "xls"], key="doubt_file")
+    if mode == "Class Timetable Only":
+        class_file = st.file_uploader("Upload Class Timetable", type=["xlsx", "xls"], key="class_only")
+    else:
+        upload_col1, upload_col2 = st.columns(2)
+        with upload_col1:
+            class_file = st.file_uploader("1. Upload Class Timetable", type=["xlsx", "xls"], key="class_file")
+        with upload_col2:
+            doubt_file = st.file_uploader("2. Upload Doubt Timetable", type=["xlsx", "xls"], key="doubt_file")
 
-# --- Helper Function: Parse Class Timetable ---
-def parse_class_timetable(uploaded_file):
-    df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
-    
-    days_map = {
-        "Monday": range(1, 9),
-        "Tuesday": range(9, 17),
-        "Wednesday": range(17, 25),
-        "Thursday": range(25, 33),
-        "Friday": range(33, 41),
-        "Saturday": range(41, 49)
-    }
-    
-    records = []
-    teacher_stats = {}
-    total_raw_assigned_slots = 0
-    total_raw_teachers = 0
-    
-    i = 2
-    while i < len(df):
-        teacher_name = str(df.iloc[i, 0]).strip()
-        if teacher_name == '' or teacher_name.lower() == 'nan':
-            i += 1
-            continue
-            
-        total_raw_teachers += 1
-        subject_row = df.iloc[i, :]
+    def parse_class_timetable(uploaded_file):
+        df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
+        days_map = {
+            "Monday": range(1, 9), "Tuesday": range(9, 17), "Wednesday": range(17, 25),
+            "Thursday": range(25, 33), "Friday": range(33, 41), "Saturday": range(41, 49)
+        }
+        records, teacher_stats = [], {}
+        total_raw_assigned_slots, total_raw_teachers = 0, 0
         
-        has_batch_row = False
-        if i + 1 < len(df):
-            next_teacher_col = str(df.iloc[i+1, 0]).strip()
-            if next_teacher_col == '' or next_teacher_col.lower() == 'nan':
-                has_batch_row = True
-                batch_row = df.iloc[i+1, :]
+        i = 2
+        while i < len(df):
+            teacher_name = str(df.iloc[i, 0]).strip()
+            if teacher_name == '' or teacher_name.lower() == 'nan':
+                i += 1; continue
+                
+            total_raw_teachers += 1
+            subject_row = df.iloc[i, :]
+            
+            has_batch_row = False
+            if i + 1 < len(df):
+                next_teacher_col = str(df.iloc[i+1, 0]).strip()
+                if next_teacher_col == '' or next_teacher_col.lower() == 'nan':
+                    has_batch_row = True
+                    batch_row = df.iloc[i+1, :]
+                else:
+                    batch_row = pd.Series([''] * len(subject_row))
             else:
                 batch_row = pd.Series([''] * len(subject_row))
-        else:
-            batch_row = pd.Series([''] * len(subject_row))
-            
-        valid_classes = {}
-        total_classes = 0
-        day_counts = {day: 0 for day in days_map}
-        
-        for day, cols in days_map.items():
-            for col in cols:
-                if col >= len(subject_row):
-                    continue
-                subj_str = str(subject_row.iloc[col]).strip()
-                batch_str = str(batch_row.iloc[col]).strip()
                 
-                is_subj_empty = (subj_str == '' or subj_str.lower() == 'nan')
-                is_batch_empty = (batch_str == '' or batch_str.lower() == 'nan')
-                
-                if not is_subj_empty and not is_batch_empty:
-                    total_raw_assigned_slots += 1
-                    total_classes += 1
-                    day_counts[day] += 1
-                    if (subj_str, batch_str) not in valid_classes:
-                        valid_classes[(subj_str, batch_str)] = 0
-                    valid_classes[(subj_str, batch_str)] += 1
-        
-        leave_days_list = []
-        if total_classes == 0:
-            status = "Not Allotted"
-            leave_text = "N/A (All Slots Free)"
-            effective_capacity = 48
-        else:
-            status = "Active"
-            leave_days_list = [day for day, cnt in day_counts.items() if cnt == 0]
-            leave_text = ", ".join(leave_days_list) if leave_days_list else "None"
-            effective_capacity = 48 - (len(leave_days_list) * 8)
+            valid_classes, total_classes, day_counts = {}, 0, {day: 0 for day in days_map}
             
-        net_free_slots = effective_capacity - total_classes
-        
-        teacher_stats[teacher_name] = {
-            'Total_Classes': total_classes,
-            'Effective_Capacity': effective_capacity,
-            'Net_Free_Slots': max(0, net_free_slots),
-            'Leave_Count': len(leave_days_list),
-            'Status': status,
-            'Leave_Days': leave_text
-        }
-                
-        if not valid_classes:
-            records.append({'Teacher': teacher_name, 'Subject': 'None', 'Batch': 'None', 'Lectures': 0})
-        else:
-            for (subj, batch), count in valid_classes.items():
-                records.append({
-                    'Teacher': teacher_name, 'Subject': subj, 'Batch': batch, 'Lectures': count
-                })
-        
-        if has_batch_row:
-            i += 2
-        else:
-            i += 1
-
-    return pd.DataFrame(records), teacher_stats, total_raw_teachers, total_raw_assigned_slots
-
-# --- Helper Function: Parse Doubt Timetable ---
-def parse_doubt_timetable(uploaded_file):
-    df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
-    doubt_counts = {}
-    total_doubt_slots = 0
-    
-    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-    
-    for index, row in df.iterrows():
-        # Ensure we look at the column named exactly "Teacher's Name"
-        if "Teacher's Name" in df.columns:
-            teacher_name = str(row["Teacher's Name"]).strip()
-        else:
-            # Fallback in case header name changes
-            teacher_name = str(row.iloc[0]).strip()
-            
-        if teacher_name == 'nan' or not teacher_name or teacher_name == "Teacher's Name":
-            continue
-            
-        slots_count = 0
-        for day in days:
-            if day in df.columns:
-                slots_str = str(row[day]).strip()
-                if slots_str != 'nan' and slots_str:
-                    # Split by comma (e.g., "D1, D2" -> 2 slots)
-                    slots = [s.strip() for s in slots_str.split(',')]
-                    slots = [s for s in slots if s] 
-                    slots_count += len(slots)
+            for day, cols in days_map.items():
+                for col in cols:
+                    if col >= len(subject_row): continue
+                    subj_str = str(subject_row.iloc[col]).strip()
+                    batch_str = str(batch_row.iloc[col]).strip()
+                    is_subj_empty = (subj_str == '' or subj_str.lower() == 'nan')
+                    is_batch_empty = (batch_str == '' or batch_str.lower() == 'nan')
                     
-        doubt_counts[teacher_name] = slots_count
-        total_doubt_slots += slots_count
-        
-    return doubt_counts, total_doubt_slots
-
-# --- Main Processing Logic ---
-if class_file is not None:
-    if mode == "Class + Doubt Timetables" and doubt_file is None:
-        st.warning("Please upload the Doubt Timetable to proceed, or switch to 'Class Timetable Only' mode.")
-    else:
-        st.success("Timetable(s) uploaded successfully! Processing data...")
-        
-        df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(class_file)
-        
-        # Process Doubt File
-        doubt_slots_map = {}
-        total_doubt_slots = 0
-        if mode == "Class + Doubt Timetables" and doubt_file is not None:
-            doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
-                
-        # Build Combined Summary Table
-        summary_rows = []
-        for teacher, info in class_teacher_stats.items():
-            class_lecs = info['Total_Classes']
-            # Safely fetch doubt slots for this specific teacher
-            doubt_lecs = doubt_slots_map.get(teacher, 0)
-            total_workload = class_lecs + doubt_lecs
+                    if not is_subj_empty and not is_batch_empty:
+                        total_raw_assigned_slots += 1
+                        total_classes += 1
+                        day_counts[day] += 1
+                        if (subj_str, batch_str) not in valid_classes:
+                            valid_classes[(subj_str, batch_str)] = 0
+                        valid_classes[(subj_str, batch_str)] += 1
             
-            effective_capacity = info['Effective_Capacity']
-            
-            final_free_slots = effective_capacity - total_workload
-            final_free_slots = max(0, final_free_slots) 
-            
-            if effective_capacity > 0:
-                class_util = class_lecs / effective_capacity
-                total_util = total_workload / effective_capacity
+            leave_days_list = []
+            if total_classes == 0:
+                status, leave_text, effective_capacity = "Not Allotted", "N/A (All Slots Free)", 48
             else:
-                class_util = 0
-                total_util = 0
+                status = "Active"
+                leave_days_list = [day for day, cnt in day_counts.items() if cnt == 0]
+                leave_text = ", ".join(leave_days_list) if leave_days_list else "None"
+                effective_capacity = 48 - (len(leave_days_list) * 8)
                 
-            summary_rows.append({
-                'Teacher': teacher,
-                'Class Lectures': class_lecs,
-                'Doubt Slots': doubt_lecs,
-                'Total Workload': total_workload,
-                'Leave / Off Days': info['Leave_Days'],
-                'Leave Days Count': info['Leave_Count'],
-                'Effective Capacity': effective_capacity,
-                'Net Free Slots': final_free_slots,
-                'True Class Util.': class_util,
-                'True Total Util.': total_util,
-                'Status': info['Status']
-            })
-            
-        df_summary = pd.DataFrame(summary_rows)
-        df_summary = df_summary.sort_values(by='Total Workload', ascending=False)
-        
-        # --- UI Dashboard Metrics ---
-        st.subheader("📊 Key Workload Metrics")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Faculty", total_teachers)
-        m2.metric("Total Class Lectures", total_class_slots)
-        
-        if mode == "Class + Doubt Timetables":
-            m3.metric("Total Doubt Slots", total_doubt_slots)
-        else:
-            m3.metric("Total Doubt Slots", "N/A")
-            
-        total_leave_days_taken = df_summary['Leave Days Count'].sum()
-        m4.metric("Total Leave Days Taken", total_leave_days_taken)
-        
-        st.divider()
-        
-        st.subheader("📋 Faculty Workload & True Utilization Summary")
-        
-        if mode == "Class Timetable Only":
-            display_df = df_summary.drop(columns=['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'])
-            st.dataframe(display_df.style.format({
-                'True Class Util.': '{:.1%}'
-            }), use_container_width=True)
-        else:
-            display_df = df_summary.drop(columns=['Leave Days Count'])
-            st.dataframe(display_df.style.format({
-                'True Class Util.': '{:.1%}',
-                'True Total Util.': '{:.1%}'
-            }), use_container_width=True)
-        
-        # --- Generate Downloadable Excel ---
-        def generate_excel(summary_df, detail_df, app_mode):
-            wb = Workbook()
-            
-            header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill("solid", fgColor="2F4F4F")
-            border_side = Side(border_style="thin", color="D3D3D3")
-            border = Border(left=border_side, right=border_side, top=border_side, bottom=border_side)
-            center_align = Alignment(horizontal="center", vertical="center")
-
-            def apply_styling(ws):
-                for cell in ws[1]:
-                    cell.font = header_font
-                    cell.fill = header_fill
-                    cell.alignment = center_align
-                for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
-                    for cell in row:
-                        cell.border = border
-                        if isinstance(cell.value, (int, float)):
-                            cell.alignment = center_align
-                ws.freeze_panes = "A2"
-                ws.auto_filter.ref = ws.dimensions
-                for col in ws.columns:
-                    max_length = 0
-                    column = col[0].column_letter
-                    for cell in col:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    ws.column_dimensions[column].width = max_length + 4
-
-            # Summary Tab
-            ws_summary = wb.active
-            ws_summary.title = "Workload & True Utilization"
-            
-            if app_mode == "Class Timetable Only":
-                df_export = summary_df.drop(columns=['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'])
-                for r in dataframe_to_rows(df_export, index=False, header=True):
-                    ws_summary.append(r)
-                apply_styling(ws_summary)
-                for cell in ws_summary['F'][1:]:
-                    cell.number_format = '0.0%'
-                rule = ColorScaleRule(start_type='min', start_color='F8696B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='63BE7B')
-                ws_summary.conditional_formatting.add(f'F2:F{ws_summary.max_row}', rule)
+            net_free_slots = effective_capacity - total_classes
+            teacher_stats[teacher_name] = {
+                'Total_Classes': total_classes, 'Effective_Capacity': effective_capacity,
+                'Net_Free_Slots': max(0, net_free_slots), 'Leave_Count': len(leave_days_list),
+                'Status': status, 'Leave_Days': leave_text
+            }
+                    
+            if not valid_classes:
+                records.append({'Teacher': teacher_name, 'Subject': 'None', 'Batch': 'None', 'Lectures': 0})
             else:
-                df_export = summary_df.drop(columns=['Leave Days Count'])
-                for r in dataframe_to_rows(df_export, index=False, header=True):
-                    ws_summary.append(r)
-                apply_styling(ws_summary)
-                for col_letter in ['I', 'J']:
-                    for cell in ws_summary[col_letter][1:]:
-                        cell.number_format = '0.0%'
-                rule = ColorScaleRule(start_type='min', start_color='F8696B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='63BE7B')
-                ws_summary.conditional_formatting.add(f'J2:J{ws_summary.max_row}', rule)
-
-            # Details Tab
-            ws_detail = wb.create_sheet(title="Detailed Class Mapping")
-            for r in dataframe_to_rows(detail_df, index=False, header=True):
-                ws_detail.append(r)
-            apply_styling(ws_detail)
+                for (subj, batch), count in valid_classes.items():
+                    records.append({'Teacher': teacher_name, 'Subject': subj, 'Batch': batch, 'Lectures': count})
             
-            output = BytesIO()
-            wb.save(output)
-            output.seek(0)
-            return output
+            i += 2 if has_batch_row else 1
 
-        excel_file = generate_excel(df_summary, df_tidy, mode)
+        return pd.DataFrame(records), teacher_stats, total_raw_teachers, total_raw_assigned_slots
+
+    def parse_doubt_timetable(uploaded_file):
+        df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
+        doubt_counts, total_doubt_slots = {}, 0
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
         
-        st.download_button(
-            label="📥 Download Complete Excel Analysis",
-            data=excel_file,
-            file_name="Faculty_Timetable_Analysis.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        for index, row in df.iterrows():
+            if "Teacher's Name" in df.columns: teacher_name = str(row["Teacher's Name"]).strip()
+            else: teacher_name = str(row.iloc[0]).strip()
+            if teacher_name == 'nan' or not teacher_name or teacher_name == "Teacher's Name": continue
+                
+            slots_count = 0
+            for day in days:
+                if day in df.columns:
+                    slots_str = str(row[day]).strip()
+                    if slots_str != 'nan' and slots_str:
+                        slots = [s for s in [s.strip() for s in slots_str.split(',')] if s] 
+                        slots_count += len(slots)
+            doubt_counts[teacher_name] = slots_count
+            total_doubt_slots += slots_count
+            
+        return doubt_counts, total_doubt_slots
+
+    if class_file is not None:
+        if mode == "Class + Doubt Timetables" and doubt_file is None:
+            st.warning("Please upload the Doubt Timetable to proceed, or switch to 'Class Timetable Only' mode.")
+        else:
+            st.success("Timetable(s) uploaded successfully! Processing data...")
+            df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(class_file)
+            
+            doubt_slots_map, total_doubt_slots = {}, 0
+            if mode == "Class + Doubt Timetables" and doubt_file is not None:
+                doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
+                    
+            summary_rows = []
+            for teacher, info in class_teacher_stats.items():
+                class_lecs = info['Total_Classes']
+                doubt_lecs = doubt_slots_map.get(teacher, 0)
+                total_workload = class_lecs + doubt_lecs
+                effective_capacity = info['Effective_Capacity']
+                final_free_slots = max(0, effective_capacity - total_workload) 
+                
+                class_util = class_lecs / effective_capacity if effective_capacity > 0 else 0
+                total_util = total_workload / effective_capacity if effective_capacity > 0 else 0
+                    
+                summary_rows.append({
+                    'Teacher': teacher, 'Class Lectures': class_lecs, 'Doubt Slots': doubt_lecs,
+                    'Total Workload': total_workload, 'Leave / Off Days': info['Leave_Days'],
+                    'Leave Days Count': info['Leave_Count'], 'Effective Capacity': effective_capacity,
+                    'Net Free Slots': final_free_slots, 'True Class Util.': class_util,
+                    'True Total Util.': total_util, 'Status': info['Status']
+                })
+                
+            df_summary = pd.DataFrame(summary_rows).sort_values(by='Total Workload', ascending=False)
+            
+            st.subheader("📊 Key Workload Metrics")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Faculty", total_teachers)
+            m2.metric("Total Class Lectures", total_class_slots)
+            m3.metric("Total Doubt Slots", total_doubt_slots if mode == "Class + Doubt Timetables" else "N/A")
+            m4.metric("Total Leave Days Taken", df_summary['Leave Days Count'].sum())
+            
+            st.divider()
+            st.subheader("📋 Faculty Workload & True Utilization Summary")
+            
+            if mode == "Class Timetable Only":
+                display_df = df_summary.drop(columns=['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'])
+                st.dataframe(display_df.style.format({'True Class Util.': '{:.1%}'}), use_container_width=True)
+            else:
+                display_df = df_summary.drop(columns=['Leave Days Count'])
+                st.dataframe(display_df.style.format({'True Class Util.': '{:.1%}', 'True Total Util.': '{:.1%}'}), use_container_width=True)
+            
+            def generate_excel(summary_df, detail_df, app_mode):
+                wb = Workbook()
+                header_font, header_fill, center_align = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="2F4F4F"), Alignment(horizontal="center", vertical="center")
+                border = Border(left=Side(border_style="thin", color="D3D3D3"), right=Side(border_style="thin", color="D3D3D3"), top=Side(border_style="thin", color="D3D3D3"), bottom=Side(border_style="thin", color="D3D3D3"))
+
+                def apply_styling(ws):
+                    for cell in ws[1]: cell.font, cell.fill, cell.alignment = header_font, header_fill, center_align
+                    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                        for cell in row:
+                            cell.border = border
+                            if isinstance(cell.value, (int, float)): cell.alignment = center_align
+                    ws.freeze_panes = "A2"
+                    ws.auto_filter.ref = ws.dimensions
+                    for col in ws.columns:
+                        max_len = max([len(str(cell.value)) for cell in col if cell.value is not None] + [0])
+                        ws.column_dimensions[col[0].column_letter].width = max_len + 4
+
+                ws_summary = wb.active
+                ws_summary.title = "Workload & True Utilization"
+                
+                cols_to_drop = ['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'] if app_mode == "Class Timetable Only" else ['Leave Days Count']
+                df_export = summary_df.drop(columns=cols_to_drop)
+                for r in dataframe_to_rows(df_export, index=False, header=True): ws_summary.append(r)
+                apply_styling(ws_summary)
+                
+                format_cols = ['F'] if app_mode == "Class Timetable Only" else ['I', 'J']
+                for col_letter in format_cols:
+                    for cell in ws_summary[col_letter][1:]: cell.number_format = '0.0%'
+                
+                rule = ColorScaleRule(start_type='min', start_color='F8696B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='63BE7B')
+                ws_summary.conditional_formatting.add(f"{format_cols[-1]}2:{format_cols[-1]}{ws_summary.max_row}", rule)
+
+                ws_detail = wb.create_sheet(title="Detailed Class Mapping")
+                for r in dataframe_to_rows(detail_df, index=False, header=True): ws_detail.append(r)
+                apply_styling(ws_detail)
+                
+                output = BytesIO()
+                wb.save(output)
+                output.seek(0)
+                return output
+
+            excel_file = generate_excel(df_summary, df_tidy, mode)
+            st.download_button(label="📥 Download Complete Excel Analysis", data=excel_file, file_name="Faculty_Timetable_Analysis.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ==========================================
+# TAB 2: SCHEDULE CALCULATOR (NEW CODE)
+# ==========================================
+with tab2:
+    st.markdown("Calculate syllabus timelines by providing any 3 variables to find the 4th.")
+    
+    # Selection logic
+    calc_option = st.selectbox(
+        "What do you want to calculate?", 
+        ["End Date", "Total Number of Lectures", "Lectures per Week", "Start Date"]
+    )
+    st.divider()
+
+    # Form inputs based on selection
+    col_a, col_b = st.columns(2)
+
+    if calc_option == "End Date":
+        with col_a:
+            start_date = st.date_input("Start Date")
+            total_lec = st.number_input("Total Number of Lectures", min_value=1, value=120)
+        with col_b:
+            lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            
+        if st.button("Calculate End Date", type="primary"):
+            weeks = total_lec / lec_per_week
+            days = weeks * 7
+            end_date = start_date + datetime.timedelta(days=days)
+            st.success(f"### 🎯 The course will end on: **{end_date.strftime('%B %d, %Y')}**")
+
+    elif calc_option == "Total Number of Lectures":
+        with col_a:
+            start_date = st.date_input("Start Date")
+            end_date = st.date_input("End Date", value=datetime.date.today() + datetime.timedelta(days=90))
+        with col_b:
+            lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            
+        if st.button("Calculate Total Lectures", type="primary"):
+            days = (end_date - start_date).days
+            if days <= 0:
+                st.error("End date must be after Start date.")
+            else:
+                weeks = days / 7
+                total_lec = weeks * lec_per_week
+                st.success(f"### 🎯 Total Lectures possible: **{int(total_lec)}** lectures")
+                
+    elif calc_option == "Lectures per Week":
+        with col_a:
+            start_date = st.date_input("Start Date")
+            end_date = st.date_input("End Date", value=datetime.date.today() + datetime.timedelta(days=90))
+        with col_b:
+            total_lec = st.number_input("Total Number of Lectures required", min_value=1, value=120)
+            
+        if st.button("Calculate Lectures per Week", type="primary"):
+            days = (end_date - start_date).days
+            if days <= 0:
+                st.error("End date must be after Start date.")
+            else:
+                weeks = days / 7
+                lec_per_week = total_lec / weeks
+                st.success(f"### 🎯 You need to schedule: **{lec_per_week:.1f}** lectures per week")
+                
+    elif calc_option == "Start Date":
+        with col_a:
+            end_date = st.date_input("Target End Date")
+            total_lec = st.number_input("Total Number of Lectures", min_value=1, value=120)
+        with col_b:
+            lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            
+        if st.button("Calculate Start Date", type="primary"):
+            weeks = total_lec / lec_per_week
+            days = weeks * 7
+            start_date = end_date - datetime.timedelta(days=days)
+            st.success(f"### 🎯 The course must start on: **{start_date.strftime('%B %d, %Y')}**")
