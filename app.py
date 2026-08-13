@@ -515,7 +515,7 @@ elif selected == "Historical Analytics":
         st.dataframe(df_teacher_hist[['week_label', 'class_lectures', 'doubt_slots', 'total_workload', 'leaves']], use_container_width=True)
 
 # ==========================================
-# PAGE 6: USER MANAGEMENT (NEW FEATURE)
+# PAGE 6: USER MANAGEMENT
 # ==========================================
 elif selected == "User Management":
     st.header("⚙️ User Management & Security")
@@ -527,43 +527,46 @@ elif selected == "User Management":
         st.markdown(f"##### Change Password for **{st.session_state['username']}**")
         col_p1, col_p2 = st.columns(2)
         with col_p1:
-            current_pass = st.text_input("Current Password", type="password")
-            new_pass = st.text_input("New Password", type="password")
-            confirm_pass = st.text_input("Confirm New Password", type="password")
-            
-            if st.button("Update Password", type="primary"):
-                # Check current password
-                check_user = login_user(st.session_state['username'], current_pass)
-                if not check_user:
-                    st.error("Current password is incorrect.")
-                elif new_pass == "":
-                    st.error("New password cannot be empty.")
-                elif new_pass != confirm_pass:
-                    st.error("New passwords do not match.")
-                else:
-                    update_password(st.session_state['username'], new_pass)
-                    st.success("Password updated successfully!")
-                    st.toast("Password Updated!", icon="🔑")
+            with st.form("change_password_form"):
+                current_pass = st.text_input("Current Password", type="password")
+                new_pass = st.text_input("New Password", type="password")
+                confirm_pass = st.text_input("Confirm New Password", type="password")
+                
+                submitted = st.form_submit_button("Update Password", type="primary")
+                
+                if submitted:
+                    check_user = login_user(st.session_state['username'], current_pass)
+                    if not check_user:
+                        st.error("Current password is incorrect.")
+                    elif new_pass.strip() == "":
+                        st.error("New password cannot be empty.")
+                    elif new_pass != confirm_pass:
+                        st.error("New passwords do not match.")
+                    else:
+                        update_password(st.session_state['username'], new_pass)
+                        st.success("Password updated successfully!")
 
     with tab_user2:
         st.markdown("##### Create a New Portal Account")
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            new_username = st.text_input("New User ID / Username")
-            new_user_pass = st.text_input("New Account Password", type="password")
-            confirm_user_pass = st.text_input("Confirm Account Password", type="password")
-            
-            if st.button("Create Account", type="primary"):
-                if new_username == "":
-                    st.error("Username cannot be empty.")
-                elif new_user_pass == "":
-                    st.error("Password cannot be empty.")
-                elif new_user_pass != confirm_user_pass:
-                    st.error("Passwords do not match.")
-                else:
-                    success = add_user(new_username, new_user_pass)
-                    if success:
-                        st.success(f"Account for '{new_username}' created successfully!")
-                        st.toast("User Account Created!", icon="👤")
+            with st.form("add_new_user_form"):
+                new_username = st.text_input("New User ID / Username")
+                new_user_pass = st.text_input("New Account Password", type="password")
+                confirm_user_pass = st.text_input("Confirm Account Password", type="password")
+                
+                submitted_new = st.form_submit_button("Create Account", type="primary")
+                
+                if submitted_new:
+                    if new_username.strip() == "":
+                        st.error("Username cannot be empty.")
+                    elif new_user_pass.strip() == "":
+                        st.error("Password cannot be empty.")
+                    elif new_user_pass != confirm_user_pass:
+                        st.error("Passwords do not match.")
                     else:
-                        st.error(f"Username '{new_username}' already exists. Choose a different username.")
+                        success = add_user(new_username, new_user_pass)
+                        if success:
+                            st.success(f"Account for '{new_username}' created successfully!")
+                        else:
+                            st.error(f"Username '{new_username}' already exists. Choose a different username.")
