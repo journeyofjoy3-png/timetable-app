@@ -6,6 +6,7 @@ import os
 import time
 import sqlite3
 import hashlib
+import base64
 import plotly.express as px
 from streamlit_option_menu import option_menu
 from openpyxl import Workbook
@@ -147,24 +148,67 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Authentication ---
+# --- Authentication & Lockscreen ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "username" not in st.session_state:
     st.session_state["username"] = ""
 
 if not st.session_state["authenticated"]:
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # 1. Background Image Injection
+    def set_login_background(image_file):
+        if os.path.exists(image_file):
+            with open(image_file, "rb") as f:
+                encoded_string = base64.b64encode(f.read()).decode()
+            
+            css = f"""
+            <style>
+            .stApp {{
+                background-image: url(data:image/jpeg;base64,{encoded_string});
+                background-size: cover;
+                background-position: center;
+                background-repeat: no-repeat;
+                background-attachment: fixed;
+            }}
+            .stApp::before {{
+                content: "";
+                position: absolute;
+                top: 0; left: 0; width: 100%; height: 100%;
+                background-color: rgba(15, 23, 42, 0.6); 
+                z-index: -1;
+            }}
+            [data-testid="column"]:nth-of-type(2) {{
+                background: rgba(30, 41, 59, 0.7);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                padding: 40px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            }}
+            </style>
+            """
+            st.markdown(css, unsafe_allow_html=True)
+
+    set_login_background("background.jpg")
+
+    # 2. Login UI
+    col1, col2, col3 = st.columns([1, 1.5, 1]) 
     with col2:
-        st.write("")
-        st.write("")
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=250)
+            st.markdown("""<div style="text-align: center;">""", unsafe_allow_html=True)
+            st.image("logo.png", width=200)
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
-            st.markdown("## 🟦 **MATRIX NET**")
-        st.title("🔒 Portal Login")
+            st.markdown("<h2 style='text-align: center; color: #38bdf8;'>🟦 MATRIX NET</h2>", unsafe_allow_html=True)
+            
+        st.markdown("<h3 style='text-align: center;'>🔒 Secure Portal</h3>", unsafe_allow_html=True)
+        st.write("")
+        
         username = st.text_input("User ID")
         password = st.text_input("Password", type="password")
+        st.write("")
+        
         if st.button("Login", type="primary", use_container_width=True):
             result = login_user(username, password)
             if result:
