@@ -65,7 +65,7 @@ with tab1:
         df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
         days_map = {
             "Monday": range(1, 9), "Tuesday": range(9, 17), "Wednesday": range(17, 25),
-            "Thursday": range(25, 33), "Friday": range(33, 41), "Saturday": range(41, 49)
+            "Thursday": range(26, 34), "Friday": range(34, 42), "Saturday": range(42, 50)
         }
         records, teacher_stats = [], {}
         total_raw_assigned_slots, total_raw_teachers = 0, 0
@@ -247,16 +247,17 @@ with tab1:
 with tab2:
     st.markdown("Calculate syllabus timelines by providing any 3 variables.")
     calc_option = st.selectbox("What do you want to calculate?", ["End Date", "Total Number of Lectures", "Lectures per Week", "Start Date"])
-    
+    st.divider()
+
     col_a, col_b = st.columns(2)
     if calc_option == "End Date":
         with col_a:
             start_date = st.date_input("Start Date")
             total_lec = st.number_input("Total Number of Lectures", min_value=1, value=120)
         with col_b:
-            lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0)
-            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0)
-        if st.button("Calculate End Date"):
+            lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
+            leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
+        if st.button("Calculate End Date", type="primary"):
             days = ((total_lec / lec_per_week) * 7) + leave_days
             st.success(f"### 🎯 Course ends on: **{(start_date + datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
 
@@ -267,7 +268,7 @@ with tab2:
         with col_b:
             lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
             leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
-        if st.button("Calculate Total Lectures"):
+        if st.button("Calculate Total Lectures", type="primary"):
             effective_days = (end_date - start_date).days - leave_days
             if effective_days > 0:
                 st.success(f"### 🎯 Total Lectures possible: **{int((effective_days / 7) * lec_per_week)}** lectures")
@@ -281,7 +282,7 @@ with tab2:
         with col_b:
             total_lec = st.number_input("Total Number of Lectures required", min_value=1, value=120)
             leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
-        if st.button("Calculate Lectures per Week"):
+        if st.button("Calculate Lectures per Week", type="primary"):
             effective_days = (end_date - start_date).days - leave_days
             if effective_days > 0:
                 st.success(f"### 🎯 You need to schedule: **{total_lec / (effective_days / 7):.1f}** lectures per week")
@@ -295,20 +296,19 @@ with tab2:
         with col_b:
             lec_per_week = st.number_input("Lectures per Week", min_value=0.5, value=6.0, step=0.5)
             leave_days = st.number_input("Holidays / Leave Days", min_value=0, value=0, step=1)
-        if st.button("Calculate Start Date"):
+        if st.button("Calculate Start Date", type="primary"):
             days = ((total_lec / lec_per_week) * 7) + leave_days
             st.success(f"### 🎯 The course must start on: **{(end_date - datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
 
-
 # ==========================================
-# TAB 3: DOUBT GENERATOR (NEW FEATURE)
+# TAB 3: DOUBT GENERATOR
 # ==========================================
 with tab3:
     st.markdown("### 🤖 Auto-Generate Doubt Timetable")
-    st.info("Upload your **Class Timetable** and a list of **Teachers** to auto-assign non-conflicting D1, D2, and D3 slots based on exact class timings.")
+    st.info("Upload your Class Timetable to generate a schedule that limits every teacher's workload to exactly 5 blocks per day.")
     
-    generator_class_file = st.file_uploader("1. Upload Current Class Timetable (to check overlaps)", type=["xlsx", "xls"], key="gen_class_file")
-    teacher_input = st.text_area("2. Enter Teacher Names (comma separated, e.g., MH, SD, AA)", height=100)
+    generator_class_file = st.file_uploader("1. Upload Current Class Timetable", type=["xlsx", "xls"], key="gen_class_file")
+    teacher_input = st.text_area("2. Enter Teacher Names (comma separated)", height=100)
     
     if st.button("Generate Doubt Schedule", type="primary"):
         if generator_class_file is None:
@@ -317,12 +317,17 @@ with tab3:
             st.error("Please enter at least one teacher name.")
         else:
             df_class = pd.read_excel(generator_class_file, sheet_name=0, keep_default_na=False)
-            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
             
-            # Helper to check if a class exists at a specific slot index
-            def has_class(row, day_offset, slot_idx):
-                col = day_offset + slot_idx
-                return (str(row.iloc[col]).strip() != '' and str(row.iloc[col]).strip().lower() != 'nan')
+            days_map = {
+                "Monday": 1, "Tuesday": 9, "Wednesday": 17, 
+                "Thursday": 26, "Friday": 34, "Saturday": 42
+            }
+            
+            def has_class(row, day_start_col, slot_idx):
+                col = day_start_col + slot_idx
+                if col >= len(row): return False
+                val = str(row.iloc[col]).strip()
+                return (val != '' and val.lower() != 'nan')
 
             target_teachers = [t.strip() for t in teacher_input.split(",") if t.strip()]
             generated_doubts = []
@@ -331,49 +336,43 @@ with tab3:
                 teacher_idx = df_class[df_class.iloc[:, 0] == teacher].index
                 teacher_schedule = {"Teacher": teacher}
                 
-                # Fetch row or create empty row if teacher has no classes
                 if not teacher_idx.empty:
-                    row = df_class.iloc[teacher_idx[0], 1:] 
+                    row = df_class.iloc[teacher_idx[0], :]
                 else:
-                    row = pd.Series([''] * 48)
+                    row = pd.Series([''] * 50)
 
-                for day_idx, day in enumerate(days):
-                    offset = day_idx * 8
+                for day, start_col in days_map.items():
+                    c0 = has_class(row, start_col, 0) # M1 
+                    c1 = has_class(row, start_col, 1) # M2 
+                    c2 = has_class(row, start_col, 2) # M3 
+                    c3 = has_class(row, start_col, 3) # M4 
+                    c4 = has_class(row, start_col, 4) # E1 
+                    c5 = has_class(row, start_col, 5) # E2 
+                    c6 = has_class(row, start_col, 6) # E3 
+                    c7 = has_class(row, start_col, 7) # E4 
                     
-                    # Read all 8 slots for the day
-                    c0 = has_class(row, offset, 0) # M1 (06:30 - 08:00)
-                    c1 = has_class(row, offset, 1) # M2 (08:10 - 09:40)
-                    c2 = has_class(row, offset, 2) # M3 (09:50 - 11:20)
-                    c3 = has_class(row, offset, 3) # M4 (11:30 - 13:00)
-                    c4 = has_class(row, offset, 4) # E1 (14:00 - 15:30)
-                    c5 = has_class(row, offset, 5) # E2 (15:40 - 17:10)
-                    c6 = has_class(row, offset, 6) # E3 (17:20 - 18:50)
-                    c7 = has_class(row, offset, 7) # E4 (19:00 - 20:30)
+                    class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
                     
-                    assigned_doubts = []
+                    # Core constraints based on exact timings
+                    d1_avail = not c2  # M3 (09:50) overlaps D1 (09:30-11:00)
+                    d2_avail = True    # M4 allowed per user instruction
+                    d3_avail = not c6  # E3 (17:20) overlaps D3 (17:30-19:00)
                     
-                    # D1 (09:30 - 11:00) Logic
-                    # Overlaps M2 (ends 09:40) and M3 (starts 09:50)
-                    if not c1 and not c2:
-                        assigned_doubts.append("D1")
-                            
-                    # D2 (12:30 - 14:00) Logic
-                    # Overlaps M4 (11:30 - 13:00)
-                    if not c3:
-                        # Prevent 4 continuous blocks: If D2 is added, and E1, E2, E3 exist 
-                        # That creates a continuous block from 12:30 to 18:50
-                        if not (c4 and c5 and c6):
-                            assigned_doubts.append("D2")
-                                
-                    # D3 (17:30 - 19:00) Logic
-                    # Overlaps E3 (17:20 - 18:50)
-                    if not c6:
-                        # "Just after class" rule: E2 ends at 17:10. D3 starts at 17:30.
-                        # This 20-min gap triggers the ban. E2 MUST be free.
-                        if not c5:
-                            assigned_doubts.append("D3")
-                            
-                    teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else "None"
+                    # Prevent 4-continuous block if E1, E2, E3 are scheduled
+                    if c4 and c5 and c6: d2_avail = False
+                    
+                    # Target 5 blocks per day (or max 3 doubts if no classes)
+                    doubts_needed = max(0, 5 - class_count)
+                    if class_count == 0: doubts_needed = 3
+                    
+                    # Preference assignment
+                    preference = []
+                    if d2_avail: preference.append("D2")
+                    if d3_avail: preference.append("D3")
+                    if d1_avail: preference.append("D1")
+                    
+                    assigned_doubts = sorted(preference[:doubts_needed])
+                    teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else ""
                 
                 generated_doubts.append(teacher_schedule)
                 
