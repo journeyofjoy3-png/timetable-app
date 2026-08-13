@@ -3,13 +3,16 @@ import pandas as pd
 from io import BytesIO
 import datetime
 import os
+import time
+import plotly.express as px
+from streamlit_option_menu import option_menu
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # --- Page Setup ---
-st.set_page_config(page_title="Matrix Neet - Faculty Operations Portal", layout="wide", page_icon="🏫")
+st.set_page_config(page_title="Matrix Net - Faculty Portal", layout="wide", page_icon="🏫")
 
 # --- Custom CSS Styling for Enterprise Design ---
 st.markdown("""
@@ -20,7 +23,7 @@ st.markdown("""
         border: 1px solid #374151;
         border-radius: 12px;
         padding: 16px 20px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
     div[data-testid="metric-container"]:hover {
@@ -37,31 +40,11 @@ st.markdown("""
         font-weight: 600 !important;
         color: #9ca3af !important;
     }
-    
     /* Button Customization */
     .stButton > button {
         border-radius: 8px !important;
         font-weight: 600 !important;
         transition: all 0.2s ease-in-out !important;
-    }
-    
-    /* Tab Styling Header */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        padding: 10px 20px;
-        border-radius: 8px;
-        font-weight: 600;
-    }
-    
-    /* Global Card Wrapper */
-    .custom-card {
-        background-color: #1f2937;
-        border-radius: 12px;
-        padding: 20px;
-        border: 1px solid #374151;
-        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -74,68 +57,73 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
-    st.title("🔒 Matrix Net Portal Login")
-    st.markdown("Please enter your administrator credentials to access the portal.")
-    username = st.text_input("User ID")
-    password = st.text_input("Password", type="password")
-    if st.button("Login", type="primary"):
-        if username == USER_ID and password == PASSWORD:
-            st.session_state["authenticated"] = True
-            st.rerun()
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.write("")
+        st.write("")
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=250)
         else:
-            st.error("Incorrect User ID or Password. Please try again.")
+            st.markdown("## 🟦 **MATRIX NET**")
+        st.title("🔒 Portal Login")
+        st.markdown("Please enter your administrator credentials.")
+        username = st.text_input("User ID")
+        password = st.text_input("Password", type="password")
+        if st.button("Login", type="primary", use_container_width=True):
+            if username == USER_ID and password == PASSWORD:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect User ID or Password. Please try again.")
     st.stop()
 
-# --- Main App Header & Logo ---
-header_col1, header_col2, header_col3 = st.columns([2, 6, 2])
-
-with header_col1:
+# --- Sleek Sidebar Navigation ---
+with st.sidebar:
     if os.path.exists("logo.png"):
-        st.image("logo.png", width=180)
+        st.image("logo.png", use_container_width=True)
     else:
-        st.markdown("### 🟦 **MATRIX NET**")
-
-with header_col2:
-    st.title("🏫 Faculty Operations Portal")
-    st.caption("Workload Analysis • Syllabus Timelines • Conflict-Free Doubt Scheduling")
-
-with header_col3:
-    st.write("")
+        st.markdown("### 🟦 MATRIX NET")
+        
+    st.caption("Operations Dashboard v2.0")
+    st.divider()
+    
+    selected = option_menu(
+        menu_title="Main Menu",
+        options=["Timetable Analyzer", "Schedule Calculator", "Doubt Generator", "Teacher Dashboard"],
+        icons=["bar-chart-fill", "calendar3", "robot", "person-badge"],
+        menu_icon="cast",
+        default_index=0,
+        styles={
+            "nav-link-selected": {"background-color": "#38bdf8", "color": "white"},
+        }
+    )
+    
+    st.divider()
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state["authenticated"] = False
         st.rerun()
 
-st.divider()
-
-# --- Navigation Tabs ---
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Timetable Analyzer", 
-    "📅 Schedule Calculator", 
-    "🤖 Doubt Generator",
-    "👤 Teacher Lookup"
-])
-
 # ==========================================
-# TAB 1: TIMETABLE ANALYZER
+# PAGE 1: TIMETABLE ANALYZER
 # ==========================================
-with tab1:
-    st.markdown("#### 📊 Faculty Workload & Utilization Analyzer")
-    st.caption("Upload your weekly Class Timetable and optional Doubt Timetable to evaluate overall capacity, leave days, and true workload utilization.")
+if selected == "Timetable Analyzer":
+    st.header("📊 Faculty Workload & Utilization Analyzer")
+    st.caption("Upload files to evaluate overall capacity, leave days, and true workload utilization.")
     
-    mode = st.radio("Select Analysis Mode:", ["Class Timetable Only", "Class + Doubt Timetables"], horizontal=True)
-    st.write("")
+    # Use Expander to keep UI clean
+    with st.expander("📁 Upload / Update Timetables", expanded=True):
+        mode = st.radio("Select Analysis Mode:", ["Class Timetable Only", "Class + Doubt Timetables"], horizontal=True)
+        class_file = None
+        doubt_file = None
 
-    class_file = None
-    doubt_file = None
-
-    if mode == "Class Timetable Only":
-        class_file = st.file_uploader("Upload Weekly Class Timetable (Excel)", type=["xlsx", "xls"], key="class_only")
-    else:
-        upload_col1, upload_col2 = st.columns(2)
-        with upload_col1:
-            class_file = st.file_uploader("1. Upload Class Timetable (Excel)", type=["xlsx", "xls"], key="class_file")
-        with upload_col2:
-            doubt_file = st.file_uploader("2. Upload Doubt Timetable (Excel)", type=["xlsx", "xls"], key="doubt_file")
+        if mode == "Class Timetable Only":
+            class_file = st.file_uploader("Upload Weekly Class Timetable (Excel)", type=["xlsx", "xls"], key="class_only")
+        else:
+            upload_col1, upload_col2 = st.columns(2)
+            with upload_col1:
+                class_file = st.file_uploader("1. Upload Class Timetable (Excel)", type=["xlsx", "xls"], key="class_file")
+            with upload_col2:
+                doubt_file = st.file_uploader("2. Upload Doubt Timetable (Excel)", type=["xlsx", "xls"], key="doubt_file")
 
     def parse_class_timetable(uploaded_file):
         df = pd.read_excel(uploaded_file, sheet_name=0, keep_default_na=False)
@@ -229,35 +217,37 @@ with tab1:
         if mode == "Class + Doubt Timetables" and doubt_file is None:
             st.warning("Please upload the Doubt Timetable to proceed, or switch to 'Class Timetable Only' mode.")
         else:
-            df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(class_file)
-            
-            doubt_slots_map, total_doubt_slots = {}, 0
-            if mode == "Class + Doubt Timetables" and doubt_file is not None:
-                doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
-                    
-            summary_rows = []
-            for teacher, info in class_teacher_stats.items():
-                class_lecs = info['Total_Classes']
-                doubt_lecs = doubt_slots_map.get(teacher, 0)
-                total_workload = class_lecs + doubt_lecs
-                effective_capacity = info['Effective_Capacity']
-                final_free_slots = max(0, effective_capacity - total_workload) 
+            with st.spinner("Analyzing Timetables..."):
+                time.sleep(0.5)
+                df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(class_file)
                 
-                class_util = class_lecs / effective_capacity if effective_capacity > 0 else 0
-                total_util = total_workload / effective_capacity if effective_capacity > 0 else 0
+                doubt_slots_map, total_doubt_slots = {}, 0
+                if mode == "Class + Doubt Timetables" and doubt_file is not None:
+                    doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
+                        
+                summary_rows = []
+                for teacher, info in class_teacher_stats.items():
+                    class_lecs = info['Total_Classes']
+                    doubt_lecs = doubt_slots_map.get(teacher, 0)
+                    total_workload = class_lecs + doubt_lecs
+                    effective_capacity = info['Effective_Capacity']
+                    final_free_slots = max(0, effective_capacity - total_workload) 
                     
-                summary_rows.append({
-                    'Teacher': teacher, 'Class Lectures': class_lecs, 'Doubt Slots': doubt_lecs,
-                    'Total Workload': total_workload, 'Leave / Off Days': info['Leave_Days'],
-                    'Leave Days Count': info['Leave_Count'], 'Effective Capacity': effective_capacity,
-                    'Net Free Slots': final_free_slots, 'True Class Util.': class_util,
-                    'True Total Util.': total_util, 'Status': info['Status']
-                })
+                    class_util = class_lecs / effective_capacity if effective_capacity > 0 else 0
+                    total_util = total_workload / effective_capacity if effective_capacity > 0 else 0
+                        
+                    summary_rows.append({
+                        'Teacher': teacher, 'Class Lectures': class_lecs, 'Doubt Slots': doubt_lecs,
+                        'Total Workload': total_workload, 'Leave / Off Days': info['Leave_Days'],
+                        'Leave Days Count': info['Leave_Count'], 'Effective Capacity': effective_capacity,
+                        'Net Free Slots': final_free_slots, 'True Class Util.': class_util,
+                        'True Total Util.': total_util, 'Status': info['Status']
+                    })
+                    
+                df_summary = pd.DataFrame(summary_rows).sort_values(by='Total Workload', ascending=False)
+                st.session_state["df_summary_cached"] = df_summary
+                st.toast('Analysis Complete!', icon='✅')
                 
-            df_summary = pd.DataFrame(summary_rows).sort_values(by='Total Workload', ascending=False)
-            st.session_state["df_summary_cached"] = df_summary # Cache for Tab 4
-            
-            st.write("")
             st.markdown("##### 📈 Key Workload Overview")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Faculty", total_teachers)
@@ -266,6 +256,21 @@ with tab1:
             m4.metric("Leaves Taken", df_summary['Leave Days Count'].sum())
             
             st.divider()
+            
+            # --- Interactive Plotly Chart ---
+            st.markdown("##### 📊 Workload Distribution (Top 15 Busiest)")
+            chart_df = df_summary.head(15)
+            fig = px.bar(
+                chart_df, x='Teacher', y=['Class Lectures', 'Doubt Slots'], 
+                title="", barmode='stack',
+                color_discrete_sequence=['#38bdf8', '#8b5cf6']
+            )
+            fig.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", 
+                font_color="#f8fafc", margin=dict(t=10, b=10)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
             st.markdown("##### 📋 Faculty Workload & Utilization Table")
             
             if mode == "Class Timetable Only":
@@ -320,10 +325,10 @@ with tab1:
             st.download_button(label="📥 Download Complete Excel Analysis Report", data=excel_file, file_name="MatrixNet_Faculty_Analysis.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
 # ==========================================
-# TAB 2: SCHEDULE CALCULATOR 
+# PAGE 2: SCHEDULE CALCULATOR 
 # ==========================================
-with tab2:
-    st.markdown("#### 📅 Syllabus Timeline & Course Calculator")
+elif selected == "Schedule Calculator":
+    st.header("📅 Syllabus Timeline & Course Calculator")
     st.caption("Calculate exact syllabus end dates or required weekly lecture density by entering any 3 variables.")
     
     calc_option = st.selectbox("What variable would you like to calculate?", ["End Date", "Total Number of Lectures", "Lectures per Week", "Start Date"])
@@ -339,7 +344,9 @@ with tab2:
             leave_days = st.number_input("Planned Holidays / Off Days", min_value=0, value=0, step=1)
         if st.button("Calculate Target End Date", type="primary"):
             days = ((total_lec / lec_per_week) * 7) + leave_days
-            st.success(f"### 🎯 Course Completion Date: **{(start_date + datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
+            result_date = start_date + datetime.timedelta(days=days)
+            st.success(f"### 🎯 Course Completion Date: **{result_date.strftime('%B %d, %Y')}**")
+            st.toast("Calculation Successful!", icon="🎉")
 
     elif calc_option == "Total Number of Lectures":
         with col_a:
@@ -351,7 +358,9 @@ with tab2:
         if st.button("Calculate Total Lectures", type="primary"):
             effective_days = (end_date - start_date).days - leave_days
             if effective_days > 0:
-                st.success(f"### 🎯 Total Possible Lectures: **{int((effective_days / 7) * lec_per_week)}** lectures")
+                result_lec = int((effective_days / 7) * lec_per_week)
+                st.success(f"### 🎯 Total Possible Lectures: **{result_lec}** lectures")
+                st.toast("Calculation Successful!", icon="🎉")
             else:
                 st.error("Invalid dates or too many leave days entered.")
 
@@ -365,7 +374,9 @@ with tab2:
         if st.button("Calculate Required Pace", type="primary"):
             effective_days = (end_date - start_date).days - leave_days
             if effective_days > 0:
-                st.success(f"### 🎯 Required Weekly Pace: **{total_lec / (effective_days / 7):.1f}** lectures / week")
+                pace = total_lec / (effective_days / 7)
+                st.success(f"### 🎯 Required Weekly Pace: **{pace:.1f}** lectures / week")
+                st.toast("Calculation Successful!", icon="🎉")
             else:
                 st.error("Invalid dates or too many leave days entered.")
 
@@ -378,93 +389,100 @@ with tab2:
             leave_days = st.number_input("Planned Holidays / Off Days", min_value=0, value=0, step=1)
         if st.button("Calculate Required Start Date", type="primary"):
             days = ((total_lec / lec_per_week) * 7) + leave_days
-            st.success(f"### 🎯 Required Course Start Date: **{(end_date - datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
+            result_date = end_date - datetime.timedelta(days=days)
+            st.success(f"### 🎯 Required Course Start Date: **{result_date.strftime('%B %d, %Y')}**")
+            st.toast("Calculation Successful!", icon="🎉")
 
 # ==========================================
-# TAB 3: DOUBT GENERATOR
+# PAGE 3: DOUBT GENERATOR
 # ==========================================
-with tab3:
-    st.markdown("#### 🤖 Conflict-Free Doubt Schedule Generator")
+elif selected == "Doubt Generator":
+    st.header("🤖 Conflict-Free Doubt Schedule Generator")
     st.caption("Auto-assign doubt slots (D1, D2, D3) based on exact class availability while capping daily workload at 5 blocks/day.")
     
-    generator_class_file = st.file_uploader("1. Upload Current Class Timetable (Excel)", type=["xlsx", "xls"], key="gen_class_file")
-    teacher_input = st.text_area("2. Enter Faculty Codes / Names (Comma Separated, e.g., RDS, AA, SKC)", height=100)
+    with st.expander("⚙️ Configuration & Upload", expanded=True):
+        generator_class_file = st.file_uploader("1. Upload Current Class Timetable (Excel)", type=["xlsx", "xls"], key="gen_class_file")
+        teacher_input = st.text_area("2. Enter Faculty Codes / Names (Comma Separated, e.g., RDS, AA, SKC)", height=100)
     
-    if st.button("Generate Doubt Schedule", type="primary"):
+    if st.button("✨ Generate Doubt Schedule", type="primary"):
         if generator_class_file is None:
             st.error("Please upload the Class Timetable Excel file.")
         elif not teacher_input:
             st.error("Please enter at least one faculty code.")
         else:
-            df_class = pd.read_excel(generator_class_file, sheet_name=0, keep_default_na=False)
+            with st.spinner("Crunching the timetable and running conflict algorithms..."):
+                time.sleep(1) # Visual UX pause
+                df_class = pd.read_excel(generator_class_file, sheet_name=0, keep_default_na=False)
+                
+                days_map = {
+                    "Monday": 1, "Tuesday": 9, "Wednesday": 17, 
+                    "Thursday": 26, "Friday": 34, "Saturday": 42
+                }
+                
+                def has_class(row, day_start_col, slot_idx):
+                    col = day_start_col + slot_idx
+                    if col >= len(row): return False
+                    val = str(row.iloc[col]).strip()
+                    return (val != '' and val.lower() != 'nan')
+
+                target_teachers = [t.strip() for t in teacher_input.split(",") if t.strip()]
+                generated_doubts = []
+
+                for teacher in target_teachers:
+                    teacher_idx = df_class[df_class.iloc[:, 0] == teacher].index
+                    teacher_schedule = {"Teacher": teacher}
+                    
+                    if not teacher_idx.empty:
+                        row = df_class.iloc[teacher_idx[0], :]
+                    else:
+                        row = pd.Series([''] * 50)
+
+                    for day, start_col in days_map.items():
+                        c0 = has_class(row, start_col, 0)
+                        c1 = has_class(row, start_col, 1)
+                        c2 = has_class(row, start_col, 2)
+                        c3 = has_class(row, start_col, 3)
+                        c4 = has_class(row, start_col, 4)
+                        c5 = has_class(row, start_col, 5)
+                        c6 = has_class(row, start_col, 6)
+                        c7 = has_class(row, start_col, 7)
+                        
+                        class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
+                        
+                        d1_avail = not c2  # M3 overlaps D1 
+                        d2_avail = True    # M4 allowed 
+                        d3_avail = not c6  # E3 overlaps D3
+                        
+                        if c4 and c5 and c6: d2_avail = False # Continuous block protection
+                        
+                        doubts_needed = max(0, 5 - class_count)
+                        if class_count == 0: doubts_needed = 3
+                        
+                        preference = []
+                        if d2_avail: preference.append("D2")
+                        if d3_avail: preference.append("D3")
+                        if d1_avail: preference.append("D1")
+                        
+                        assigned_doubts = sorted(preference[:doubts_needed])
+                        teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else "None"
+                    
+                    generated_doubts.append(teacher_schedule)
+                    
+                df_gen = pd.DataFrame(generated_doubts)
+                st.session_state["df_doubt_gen"] = df_gen
             
-            days_map = {
-                "Monday": 1, "Tuesday": 9, "Wednesday": 17, 
-                "Thursday": 26, "Friday": 34, "Saturday": 42
-            }
-            
-            def has_class(row, day_start_col, slot_idx):
-                col = day_start_col + slot_idx
-                if col >= len(row): return False
-                val = str(row.iloc[col]).strip()
-                return (val != '' and val.lower() != 'nan')
-
-            target_teachers = [t.strip() for t in teacher_input.split(",") if t.strip()]
-            generated_doubts = []
-
-            for teacher in target_teachers:
-                teacher_idx = df_class[df_class.iloc[:, 0] == teacher].index
-                teacher_schedule = {"Teacher": teacher}
-                
-                if not teacher_idx.empty:
-                    row = df_class.iloc[teacher_idx[0], :]
-                else:
-                    row = pd.Series([''] * 50)
-
-                for day, start_col in days_map.items():
-                    c0 = has_class(row, start_col, 0)
-                    c1 = has_class(row, start_col, 1)
-                    c2 = has_class(row, start_col, 2)
-                    c3 = has_class(row, start_col, 3)
-                    c4 = has_class(row, start_col, 4)
-                    c5 = has_class(row, start_col, 5)
-                    c6 = has_class(row, start_col, 6)
-                    c7 = has_class(row, start_col, 7)
-                    
-                    class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
-                    
-                    d1_avail = not c2  # M3 (09:50) overlaps D1 (09:30-11:00)
-                    d2_avail = True    # M4 allowed (joins 1:00 PM)
-                    d3_avail = not c6  # E3 (17:20) overlaps D3 (17:30-19:00)
-                    
-                    if c4 and c5 and c6: d2_avail = False # Continuous block protection
-                    
-                    doubts_needed = max(0, 5 - class_count)
-                    if class_count == 0: doubts_needed = 3
-                    
-                    preference = []
-                    if d2_avail: preference.append("D2")
-                    if d3_avail: preference.append("D3")
-                    if d1_avail: preference.append("D1")
-                    
-                    assigned_doubts = sorted(preference[:doubts_needed])
-                    teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else "None"
-                
-                generated_doubts.append(teacher_schedule)
-                
-            st.success("✨ Doubt Schedule Generated Successfully!")
-            df_gen = pd.DataFrame(generated_doubts)
-            st.session_state["df_doubt_gen"] = df_gen
+            st.toast("Schedule Generated Successfully!", icon="🎉")
+            st.success("✨ Process Complete!")
             st.dataframe(df_gen, use_container_width=True)
 
             csv = df_gen.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Generated Doubt Timetable (CSV)", csv, "MatrixNet_Generated_Doubt_Schedule.csv", "text/csv")
 
 # ==========================================
-# TAB 4: INDIVIDUAL TEACHER LOOKUP
+# PAGE 4: INDIVIDUAL TEACHER LOOKUP
 # ==========================================
-with tab4:
-    st.markdown("#### 👤 Individual Faculty Dashboard")
+elif selected == "Teacher Dashboard":
+    st.header("👤 Individual Faculty Dashboard")
     st.caption("Select or search for an individual teacher to view their isolated workload metrics and off-day summary.")
     
     if "df_summary_cached" in st.session_state:
@@ -477,7 +495,7 @@ with tab4:
             t_data = df_sum[df_sum["Teacher"] == selected_teacher].iloc[0]
             
             st.write("")
-            st.markdown(f"### 📌 Workload Overview for **{selected_teacher}**")
+            st.markdown(f"### 📌 Profile: **{selected_teacher}**")
             
             sc1, sc2, sc3, sc4 = st.columns(4)
             sc1.metric("Class Lectures", t_data["Class Lectures"])
@@ -491,7 +509,7 @@ with tab4:
             if "df_doubt_gen" in st.session_state:
                 df_gen_tab = st.session_state["df_doubt_gen"]
                 if selected_teacher in df_gen_tab["Teacher"].values:
-                    st.markdown("##### 🤖 Auto-Generated Doubt Schedule:")
+                    st.markdown("##### 🤖 Auto-Generated Doubt Schedule for this week:")
                     st.dataframe(df_gen_tab[df_gen_tab["Teacher"] == selected_teacher], use_container_width=True)
     else:
-        st.info("💡 Please upload a timetable in **Tab 1 (Timetable Analyzer)** first to view individual faculty dashboards.")
+        st.info("💡 Please upload a timetable in the **Timetable Analyzer** menu first to unlock individual faculty dashboards.")
