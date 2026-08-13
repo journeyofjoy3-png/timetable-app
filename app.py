@@ -5,6 +5,7 @@ import datetime
 import os
 import time
 import sqlite3
+import hashlib
 import plotly.express as px
 from streamlit_option_menu import option_menu
 from openpyxl import Workbook
@@ -12,10 +13,21 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+# --- Password Hashing Helper ---
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+def check_hashes(password, hashed_text):
+    if make_hashes(password) == hashed_text:
+        return hashed_text
+    return False
+
 # --- Database Setup ---
 def init_db():
     conn = sqlite3.connect('faculty_history.db')
     c = conn.cursor()
+    
+    # 1. Workload History Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS workload_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,15 +41,58 @@ def init_db():
             leaves REAL
         )
     ''')
+    
+    # 2. Users Table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT,
+            role TEXT
+        )
+    ''')
+    
+    # Create default admin account if table is empty
+    c.execute("SELECT COUNT(*) FROM users")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                  ("admin", make_hashes("matrix2026"), "admin"))
+        
     conn.commit()
     conn.close()
 
 init_db()
 
+# --- Database User Management Functions ---
+def login_user(username, password):
+    conn = sqlite3.connect('faculty_history.db')
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE username =? AND password = ?', (username, make_hashes(password)))
+    data = c.fetchall()
+    conn.close()
+    return data
+
+def add_user(username, password, role="admin"):
+    conn = sqlite3.connect('faculty_history.db')
+    c = conn.cursor()
+    try:
+        c.execute('INSERT INTO users(username, password, role) VALUES (?,?,?)', (username, make_hashes(password), role))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+
+def update_password(username, new_password):
+    conn = sqlite3.connect('faculty_history.db')
+    c = conn.cursor()
+    c.execute('UPDATE users SET password = ? WHERE username = ?', (make_hashes(new_password), username))
+    conn.commit()
+    conn.close()
+
 def save_to_db(df, week_label):
     conn = sqlite3.connect('faculty_history.db')
     c = conn.cursor()
-    # Delete existing records for this week label to prevent duplicates if clicked twice
     c.execute("DELETE FROM workload_history WHERE week_label = ?", (week_label,))
     
     df_to_save = df[['Teacher', 'Class Lectures', 'Doubt Slots', 'Total Workload', 'Effective Capacity', 'Leave Days Count']].copy()
@@ -93,11 +148,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Authentication ---
-USER_ID = "admin"
-PASSWORD = "matrix2026"
-
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 
 if not st.session_state["authenticated"]:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -112,8 +166,10 @@ if not st.session_state["authenticated"]:
         username = st.text_input("User ID")
         password = st.text_input("Password", type="password")
         if st.button("Login", type="primary", use_container_width=True):
-            if username == USER_ID and password == PASSWORD:
+            result = login_user(username, password)
+            if result:
                 st.session_state["authenticated"] = True
+                st.session_state["username"] = username
                 st.rerun()
             else:
                 st.error("Incorrect User ID or Password. Please try again.")
@@ -126,13 +182,13 @@ with st.sidebar:
     else:
         st.markdown("### 🟦 MATRIX NET")
         
-    st.caption("Operations Dashboard v3.0")
+    st.caption(f"Logged in as: **{st.session_state['username']}**")
     st.divider()
     
     selected = option_menu(
         menu_title="Main Menu",
-        options=["Timetable Analyzer", "Schedule Calculator", "Doubt Generator", "Teacher Dashboard", "Historical Analytics"],
-        icons=["bar-chart-fill", "calendar3", "robot", "person-badge", "graph-up"],
+        options=["Timetable Analyzer", "Schedule Calculator", "Doubt Generator", "Teacher Dashboard", "Historical Analytics", "User Management"],
+        icons=["bar-chart-fill", "calendar3", "robot", "person-badge", "graph-up", "gear-fill"],
         menu_icon="cast",
         default_index=0,
         styles={"nav-link-selected": {"background-color": "#38bdf8", "color": "white"}}
@@ -141,6 +197,7 @@ with st.sidebar:
     st.divider()
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state["authenticated"] = False
+        st.session_state["username"] = ""
         st.rerun()
 
 # ==========================================
@@ -276,7 +333,6 @@ if selected == "Timetable Analyzer":
             m3.metric("Doubt Slots", total_doubt_slots if mode == "Class + Doubt Timetables" else "N/A")
             m4.metric("Leaves Taken", df_summary['Leave Days Count'].sum())
             
-            # Historical Database Save Logic
             st.divider()
             st.markdown("##### 💾 Save to Historical Database")
             sc1, sc2 = st.columns([3, 1])
@@ -322,7 +378,6 @@ elif selected == "Schedule Calculator":
             days = ((total_lec / lec_per_week) * 7) + leave_days
             st.success(f"### 🎯 Course Completion Date: **{(start_date + datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
 
-    # (Skipping other calculator blocks here for brevity in rendering - they function the same as previously built)
     elif calc_option == "Total Number of Lectures":
         with col_a:
             start_date = st.date_input("Start Date")
@@ -355,7 +410,6 @@ elif selected == "Schedule Calculator":
         if st.button("Calculate", type="primary"):
             days = ((total_lec / lec_per_week) * 7) + leave_days
             st.success(f"### 🎯 Required Course Start Date: **{(end_date - datetime.timedelta(days=days)).strftime('%B %d, %Y')}**")
-
 
 # ==========================================
 # PAGE 3: DOUBT GENERATOR
@@ -398,7 +452,7 @@ elif selected == "Doubt Generator":
                         
                         class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
                         d1_avail = not c2  
-                        d2_avail = not (c4 and c5 and c6) # M4 allowed, but watch for continuous E1,E2,E3
+                        d2_avail = not (c4 and c5 and c6) 
                         d3_avail = not c6  
                         
                         doubts_needed = max(0, 5 - class_count)
@@ -443,8 +497,6 @@ elif selected == "Teacher Dashboard":
 # ==========================================
 elif selected == "Historical Analytics":
     st.header("📈 Historical Workload Analytics")
-    st.caption("View trends and historical data for faculty members across all saved weeks.")
-    
     conn = sqlite3.connect('faculty_history.db')
     df_hist = pd.read_sql('SELECT * FROM workload_history', conn)
     conn.close()
@@ -454,19 +506,64 @@ elif selected == "Historical Analytics":
     else:
         teacher_list = df_hist['teacher'].unique().tolist()
         selected_teacher_hist = st.selectbox("Select Faculty to View Trends:", teacher_list)
-        
         df_teacher_hist = df_hist[df_hist['teacher'] == selected_teacher_hist]
         
         st.markdown(f"##### Workload Trend for {selected_teacher_hist}")
-        fig = px.line(
-            df_teacher_hist, 
-            x='week_label', 
-            y=['class_lectures', 'doubt_slots', 'total_workload'],
-            labels={'value': 'Slots Assigned', 'week_label': 'Week / Date'},
-            markers=True
-        )
+        fig = px.line(df_teacher_hist, x='week_label', y=['class_lectures', 'doubt_slots', 'total_workload'], markers=True)
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font_color="#f8fafc")
         st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("##### Raw Historical Data")
         st.dataframe(df_teacher_hist[['week_label', 'class_lectures', 'doubt_slots', 'total_workload', 'leaves']], use_container_width=True)
+
+# ==========================================
+# PAGE 6: USER MANAGEMENT (NEW FEATURE)
+# ==========================================
+elif selected == "User Management":
+    st.header("⚙️ User Management & Security")
+    st.caption("Manage portal accounts, add new administrator users, or update your password.")
+    
+    tab_user1, tab_user2 = st.tabs(["🔑 Change Password", "➕ Add New User"])
+    
+    with tab_user1:
+        st.markdown(f"##### Change Password for **{st.session_state['username']}**")
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            current_pass = st.text_input("Current Password", type="password")
+            new_pass = st.text_input("New Password", type="password")
+            confirm_pass = st.text_input("Confirm New Password", type="password")
+            
+            if st.button("Update Password", type="primary"):
+                # Check current password
+                check_user = login_user(st.session_state['username'], current_pass)
+                if not check_user:
+                    st.error("Current password is incorrect.")
+                elif new_pass == "":
+                    st.error("New password cannot be empty.")
+                elif new_pass != confirm_pass:
+                    st.error("New passwords do not match.")
+                else:
+                    update_password(st.session_state['username'], new_pass)
+                    st.success("Password updated successfully!")
+                    st.toast("Password Updated!", icon="🔑")
+
+    with tab_user2:
+        st.markdown("##### Create a New Portal Account")
+        col_u1, col_u2 = st.columns(2)
+        with col_u1:
+            new_username = st.text_input("New User ID / Username")
+            new_user_pass = st.text_input("New Account Password", type="password")
+            confirm_user_pass = st.text_input("Confirm Account Password", type="password")
+            
+            if st.button("Create Account", type="primary"):
+                if new_username == "":
+                    st.error("Username cannot be empty.")
+                elif new_user_pass == "":
+                    st.error("Password cannot be empty.")
+                elif new_user_pass != confirm_user_pass:
+                    st.error("Passwords do not match.")
+                else:
+                    success = add_user(new_username, new_user_pass)
+                    if success:
+                        st.success(f"Account for '{new_username}' created successfully!")
+                        st.toast("User Account Created!", icon="👤")
+                    else:
+                        st.error(f"Username '{new_username}' already exists. Choose a different username.")
