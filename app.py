@@ -9,7 +9,7 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # --- Page Setup ---
-st.set_page_config(page_title="Matrix Net - Faculty Operations Portal", layout="wide", page_icon="🏫")
+st.set_page_config(page_title="Matrix Neet - Faculty Operations Portal", layout="wide", page_icon="🏫")
 
 # --- Custom CSS Styling for Enterprise Design ---
 st.markdown("""
