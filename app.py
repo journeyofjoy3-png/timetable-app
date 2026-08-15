@@ -16,10 +16,12 @@ import google.generativeai as genai
 from PIL import Image
 
 # --- Password Hashing Helper ---
-def make_hashes(password): return hashlib.sha256(str.encode(password)).hexdigest()
+def make_hashes(password): 
+    return hashlib.sha256(str.encode(password)).hexdigest()
 
 def check_hashes(password, hashed_text):
-    if make_hashes(password) == hashed_text: return hashed_text
+    if make_hashes(password) == hashed_text: 
+        return hashed_text
     return False
 
 # --- Database Setup ---
@@ -77,11 +79,9 @@ def save_to_db(df, week_label):
     df_to_save.to_sql('workload_history', conn, if_exists='append', index=False)
     conn.close()
 
-# --- AI Image Parsing Logic ---
+# --- AI Image Parsing Logic (With Model Fallback) ---
 def extract_timetable_from_image(image_file, api_key):
     genai.configure(api_key=api_key)
-    # Using the fast & highly capable 1.5-flash model
-    model = genai.GenerativeModel('gemini-1.5-flash') 
     img = Image.open(image_file)
     
     prompt = """
@@ -96,33 +96,73 @@ def extract_timetable_from_image(image_file, api_key):
     3. If a cell is empty or blank, leave the CSV value empty.
     4. Do NOT use markdown code blocks like ```csv. Output raw CSV text only.
     """
-    response = model.generate_content([prompt, img])
     
-    # Safely strip markdown backticks to prevent syntax errors
+    response = None
+    for model_name in ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-pro-vision']:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([prompt, img])
+            if response and response.text:
+                break
+        except Exception:
+            continue
+            
+    if not response or not response.text:
+        raise Exception("Could not process image with available Gemini models. Please check your API key.")
+        
     raw_text = response.text
-    raw_text = raw_text.replace('```csv', '')
-    raw_text = raw_text.replace('```', '')
+    raw_text = raw_text.replace('```csv', '').replace('```', '')
     csv_data = raw_text.strip()
     
     df = pd.read_csv(StringIO(csv_data))
     return df
 
-# --- Page Setup & CSS ---
+# --- Page Setup & Custom CSS ---
 st.set_page_config(page_title="Matrix Net - Faculty Portal", layout="wide", page_icon="🏫")
 st.markdown("""
 <style>
-    div[data-testid="metric-container"] { background: linear-gradient(135deg, #1f2937 0%, #111827 100%); border: 1px solid #374151; border-radius: 12px; padding: 16px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    div[data-testid="metric-container"]:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3); }
-    div[data-testid="stMetricValue"] { font-size: 28px !important; font-weight: 700 !important; color: #38bdf8 !important; }
-    div[data-testid="stMetricLabel"] { font-size: 14px !important; font-weight: 600 !important; color: #9ca3af !important; }
-    .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.2s ease-in-out !important; }
-    .ai-question-box { background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 5px solid #38bdf8; margin-top: 20px;}
+    div[data-testid="metric-container"] { 
+        background: linear-gradient(135deg, #1f2937 0%, #111827 100%); 
+        border: 1px solid #374151; 
+        border-radius: 12px; 
+        padding: 16px 20px; 
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); 
+        transition: transform 0.2s ease, box-shadow 0.2s ease; 
+    }
+    div[data-testid="metric-container"]:hover { 
+        transform: translateY(-2px); 
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3); 
+    }
+    div[data-testid="stMetricValue"] { 
+        font-size: 28px !important; 
+        font-weight: 700 !important; 
+        color: #38bdf8 !important; 
+    }
+    div[data-testid="stMetricLabel"] { 
+        font-size: 14px !important; 
+        font-weight: 600 !important; 
+        color: #9ca3af !important; 
+    }
+    .stButton > button { 
+        border-radius: 8px !important; 
+        font-weight: 600 !important; 
+        transition: all 0.2s ease-in-out !important; 
+    }
+    .ai-question-box { 
+        background-color: #1e293b; 
+        padding: 25px; 
+        border-radius: 12px; 
+        border-left: 5px solid #38bdf8; 
+        margin-top: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- Authentication & Lockscreen ---
-if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
-if "username" not in st.session_state: st.session_state["username"] = ""
+if "authenticated" not in st.session_state: 
+    st.session_state["authenticated"] = False
+if "username" not in st.session_state: 
+    st.session_state["username"] = ""
 
 if not st.session_state["authenticated"]:
     def set_login_background(image_file):
@@ -131,9 +171,29 @@ if not st.session_state["authenticated"]:
                 encoded_string = base64.b64encode(f.read()).decode()
             css = f"""
             <style>
-            .stApp {{ background-image: url(data:image/jpeg;base64,{encoded_string}); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed; }}
-            .stApp::before {{ content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(15, 23, 42, 0.6); z-index: -1; }}
-            [data-testid="column"]:nth-of-type(2) {{ background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); padding: 40px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }}
+            .stApp {{ 
+                background-image: url(data:image/jpeg;base64,{encoded_string}); 
+                background-size: cover; 
+                background-position: center; 
+                background-repeat: no-repeat; 
+                background-attachment: fixed; 
+            }}
+            .stApp::before {{ 
+                content: ""; 
+                position: absolute; 
+                top: 0; left: 0; width: 100%; height: 100%; 
+                background-color: rgba(15, 23, 42, 0.6); 
+                z-index: -1; 
+            }}
+            [data-testid="column"]:nth-of-type(2) {{ 
+                background: rgba(30, 41, 59, 0.7); 
+                backdrop-filter: blur(12px); 
+                -webkit-backdrop-filter: blur(12px); 
+                padding: 40px; 
+                border-radius: 16px; 
+                border: 1px solid rgba(255, 255, 255, 0.1); 
+                box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); 
+            }}
             </style>
             """
             st.markdown(css, unsafe_allow_html=True)
@@ -164,8 +224,10 @@ if not st.session_state["authenticated"]:
 
 # --- Sidebar Navigation ---
 with st.sidebar:
-    if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
-    else: st.markdown("### 🟦 MATRIX NET")
+    if os.path.exists("logo.png"): 
+        st.image("logo.png", use_container_width=True)
+    else: 
+        st.markdown("### 🟦 MATRIX NET")
     st.caption(f"Logged in as: **{st.session_state['username']}**")
     st.divider()
     
@@ -198,8 +260,10 @@ if selected == "Timetable Analyzer":
             class_file = st.file_uploader("Upload Weekly Class Timetable (Excel or Image)", type=["xlsx", "xls", "png", "jpg", "jpeg"], key="class_only")
         else:
             upload_col1, upload_col2 = st.columns(2)
-            with upload_col1: class_file = st.file_uploader("1. Upload Class Timetable (Excel or Image)", type=["xlsx", "xls", "png", "jpg", "jpeg"], key="class_file")
-            with upload_col2: doubt_file = st.file_uploader("2. Upload Doubt Timetable (Excel ONLY)", type=["xlsx", "xls"], key="doubt_file")
+            with upload_col1: 
+                class_file = st.file_uploader("1. Upload Class Timetable (Excel or Image)", type=["xlsx", "xls", "png", "jpg", "jpeg"], key="class_file")
+            with upload_col2: 
+                doubt_file = st.file_uploader("2. Upload Doubt Timetable (Excel ONLY)", type=["xlsx", "xls"], key="doubt_file")
 
     def parse_class_timetable(df, is_ai_format=False):
         days_map = {"Monday": range(1,9), "Tuesday": range(9,17), "Wednesday": range(17,25), "Thursday": range(26,34), "Friday": range(34,42), "Saturday": range(42,50)}
@@ -554,7 +618,7 @@ elif selected == "Historical Analytics":
         st.dataframe(df_teacher_hist[['week_label', 'class_lectures', 'doubt_slots', 'total_workload', 'leaves']], use_container_width=True)
 
 # ==========================================
-# PAGE 6: QUESTION GENERATOR (NEW AI FEATURE)
+# PAGE 6: QUESTION GENERATOR (WITH AI FALLBACK)
 # ==========================================
 elif selected == "Question Generator":
     st.header("🧠 NEET-UG Expert Question Generator")
@@ -577,7 +641,6 @@ elif selected == "Question Generator":
         else:
             with st.spinner("🤖 NTA Expert AI is crafting a unique question..."):
                 genai.configure(api_key=ai_api_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 prompt = f"""
                 Act as an expert NTA (National Testing Agency) paper setter for the NEET-UG examination. Your task is to generate a highly unique, conceptual, and zero-repetition Multiple Choice Question (MCQ) based on the parameters provided below.
@@ -616,11 +679,23 @@ elif selected == "Question Generator":
                 """
                 
                 try:
-                    response = model.generate_content(prompt)
-                    st.markdown("<div class='ai-question-box'>", unsafe_allow_html=True)
-                    st.markdown("### 📝 Generated Question")
-                    st.markdown(response.text)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    response = None
+                    for model_name in ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-pro']:
+                        try:
+                            model = genai.GenerativeModel(model_name)
+                            response = model.generate_content(prompt)
+                            if response and response.text:
+                                break
+                        except Exception:
+                            continue
+                            
+                    if response and response.text:
+                        st.markdown("<div class='ai-question-box'>", unsafe_allow_html=True)
+                        st.markdown("### 📝 Generated Question")
+                        st.markdown(response.text)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    else:
+                        st.error("❌ Could not generate question with available Gemini models. Please check your API key.")
                 except Exception as e:
                     st.error(f"❌ Error generating question: {e}")
 
