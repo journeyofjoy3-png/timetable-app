@@ -1,82 +1,3 @@
-import streamlit as st
-import pandas as pd
-from io import BytesIO, StringIO
-import datetime
-import os
-import sqlite3
-import hashlib
-import base64
-import plotly.express as px
-from streamlit_option_menu import option_menu
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.formatting.rule import ColorScaleRule
-from openpyxl.utils.dataframe import dataframe_to_rows
-import google.generativeai as genai
-from PIL import Image
-
-# --- Password Hashing Helper ---
-def make_hashes(password): return hashlib.sha256(str.encode(password)).hexdigest()
-
-def check_hashes(password, hashed_text):
-    if make_hashes(password) == hashed_text: return hashed_text
-    return False
-
-# --- Database Setup ---
-def init_db():
-    conn = sqlite3.connect('faculty_history.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS workload_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, upload_date TEXT, week_label TEXT,
-            teacher TEXT, class_lectures REAL, doubt_slots REAL, total_workload REAL,
-            effective_capacity REAL, leaves REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
-    c.execute("SELECT COUNT(*) FROM users")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("admin", make_hashes("matrix2026"), "admin"))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def login_user(username, password):
-    conn = sqlite3.connect('faculty_history.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE username =? AND password = ?', (username, make_hashes(password)))
-    data = c.fetchall()
-    conn.close()
-    return data
-
-def add_user(username, password, role="admin"):
-    conn = sqlite3.connect('faculty_history.db')
-    c = conn.cursor()
-    try:
-        c.execute('INSERT INTO users(username, password, role) VALUES (?,?,?)', (username, make_hashes(password), role))
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
-
-def update_password(username, new_password):
-    conn = sqlite3.connect('faculty_history.db')
-    c = conn.cursor()
-    c.execute('UPDATE users SET password = ? WHERE username = ?', (make_hashes(new_password), username))
-    conn.commit()
-    conn.close()
-
-def save_to_db(df, week_label):
-    conn = sqlite3.connect('faculty_history.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM workload_history WHERE week_label = ?", (week_label,))
-    df_to_save = df[['Teacher', 'Class Lectures', 'Doubt Slots', 'Total Workload', 'Effective Capacity', 'Leave Days Count']].copy()
-    df_to_save['week_label'] = week_label
-    df_to_save['upload_date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    df_to_save.rename(columns={'Teacher': 'teacher', 'Class Lectures': 'class_lectures', 'Doubt Slots': 'doubt_slots', 'Total Workload': 'total_workload', 'Effective Capacity': 'effective_capacity', 'Leave Days Count': 'leaves'}, inplace=True)
-    df_to_save.to_sql('workload_history', conn, if_exists='append', index=False)
-    conn.close()
-
 # --- AI Image Parsing Logic ---
 def extract_timetable_from_image(image_file, api_key):
     genai.configure(api_key=api_key)
@@ -96,4 +17,12 @@ def extract_timetable_from_image(image_file, api_key):
     4. Do NOT use markdown code blocks like ```csv. Output raw CSV text only.
     """
     response = model.generate_content([prompt, img])
-    csv_data = response.text.replace("
+    
+    # Safely strip markdown backticks to prevent syntax errors
+    raw_text = response.text
+    raw_text = raw_text.replace('```csv', '')
+    raw_text = raw_text.replace('```', '')
+    csv_data = raw_text.strip()
+    
+    df = pd.read_csv(StringIO(csv_data))
+    return df
