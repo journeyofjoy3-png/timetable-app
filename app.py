@@ -116,6 +116,7 @@ st.markdown("""
     div[data-testid="stMetricValue"] { font-size: 28px !important; font-weight: 700 !important; color: #38bdf8 !important; }
     div[data-testid="stMetricLabel"] { font-size: 14px !important; font-weight: 600 !important; color: #9ca3af !important; }
     .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.2s ease-in-out !important; }
+    .ai-question-box { background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 5px solid #38bdf8; margin-top: 20px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -169,10 +170,17 @@ with st.sidebar:
     st.divider()
     
     st.markdown("### ⚙️ AI Settings")
-    ai_api_key = st.text_input("Gemini API Key (For Image Uploads)", type="password", help="Required if you upload timetable images instead of Excel files.")
+    ai_api_key = st.text_input("Gemini API Key", type="password", help="Required for Image uploads and AI Question Generation.")
     st.divider()
     
-    selected = option_menu("Main Menu", ["Timetable Analyzer", "Schedule Calculator", "Doubt Generator", "Teacher Dashboard", "Historical Analytics", "User Management"], icons=["bar-chart-fill", "calendar3", "robot", "person-badge", "graph-up", "gear-fill"], menu_icon="cast", default_index=0, styles={"nav-link-selected": {"background-color": "#38bdf8", "color": "white"}})
+    selected = option_menu(
+        "Main Menu", 
+        ["Timetable Analyzer", "Schedule Calculator", "Doubt Generator", "Teacher Dashboard", "Historical Analytics", "Question Generator", "User Management"], 
+        icons=["bar-chart-fill", "calendar3", "robot", "person-badge", "graph-up", "patch-question", "gear-fill"], 
+        menu_icon="cast", 
+        default_index=0, 
+        styles={"nav-link-selected": {"background-color": "#38bdf8", "color": "white"}}
+    )
     st.divider()
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state["authenticated"], st.session_state["username"] = False, ""
@@ -524,7 +532,7 @@ elif selected == "Teacher Dashboard":
         st.info("💡 Please upload a timetable in the Analyzer menu first.")
 
 # ==========================================
-# PAGE 5: HISTORICAL Analytics
+# PAGE 5: HISTORICAL ANALYTICS
 # ==========================================
 elif selected == "Historical Analytics":
     st.header("📈 Historical Workload Analytics")
@@ -546,7 +554,78 @@ elif selected == "Historical Analytics":
         st.dataframe(df_teacher_hist[['week_label', 'class_lectures', 'doubt_slots', 'total_workload', 'leaves']], use_container_width=True)
 
 # ==========================================
-# PAGE 6: USER MANAGEMENT
+# PAGE 6: QUESTION GENERATOR (NEW AI FEATURE)
+# ==========================================
+elif selected == "Question Generator":
+    st.header("🧠 NEET-UG Expert Question Generator")
+    st.caption("Generate highly unique, conceptual, zero-repetition MCQs using NTA expert logic.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        subject = st.selectbox("Subject", ["Physics", "Chemistry", "Biology (Botany)", "Biology (Zoology)"])
+        chapter = st.text_input("Chapter Name", placeholder="e.g., Thermodynamics")
+        difficulty = st.selectbox("Difficulty Level", ["Easy", "Medium", "Hard", "Rank-Decider"])
+    with col2:
+        topic = st.text_input("Topic Name", placeholder="e.g., Carnot Engine")
+        subtopic = st.text_input("Subtopic Name (Optional)", placeholder="e.g., Efficiency Graphs")
+
+    if st.button("✨ Generate Unique MCQ", type="primary"):
+        if not ai_api_key:
+            st.error("🔑 Please enter your Gemini API Key in the sidebar to generate questions.")
+        elif not chapter or not topic:
+            st.warning("⚠️ Please fill in at least the Chapter and Topic fields.")
+        else:
+            with st.spinner("🤖 NTA Expert AI is crafting a unique question..."):
+                genai.configure(api_key=ai_api_key)
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                
+                prompt = f"""
+                Act as an expert NTA (National Testing Agency) paper setter for the NEET-UG examination. Your task is to generate a highly unique, conceptual, and zero-repetition Multiple Choice Question (MCQ) based on the parameters provided below.
+
+                PARAMETERS:
+                - Subject: {subject}
+                - Chapter: {chapter}
+                - Topic: {topic}
+                - Subtopic: {subtopic if subtopic else 'General'}
+                - Difficulty Level: {difficulty}
+
+                STRICT ANTI-REPETITION RULES:
+                To ensure this question is entirely unique and unlike standard generic questions:
+                1. Concept Angle: Do not ask the most obvious definition or formula. Instead, pick a niche edge-case, an exception, a graphical interpretation, or a secondary application of the subtopic.
+                2. Cross-linking: If possible, slightly integrate a foundational concept from earlier in the chapter to test comprehensive understanding.
+                3. NCERT Bound: The core concept MUST strictly lie within the NCERT syllabus boundaries, but the application should require critical thinking.
+
+                QUESTION FORMAT REQUIRED (Choose ONE randomly to ensure variety):
+                - Format A: Standard Conceptual / Numerical (with a slight twist)
+                - Format B: Assertion and Reason
+                - Format C: Multi-Statement (e.g., "How many of the above statements are correct?")
+                - Format D: Match the Columns (minimum 4 items per column)
+                - Format E: "Which of the following is INCORRECT?" (Requires reading all options carefully)
+
+                OUTPUT STRUCTURE:
+                1. **Question:** (Write the question clearly. If it's physics/physical chemistry, ensure the math is solvable within 1 minute without a calculator).
+                2. **Options:**
+                   A) [Option 1]
+                   B) [Option 2]
+                   C) [Option 3]
+                   D) [Option 4]
+                (Ensure options include common student traps/miscalculations as distractors).
+                3. **Correct Answer:** (Just the letter)
+                4. **Detailed Solution & Thought Process:** (Explain WHY the right answer is right, WHERE students usually make mistakes in this specific question, and briefly explain why the distractors are wrong).
+                5. **Concept Tag:** (State the specific 1-line concept or NCERT page reference tested here).
+                """
+                
+                try:
+                    response = model.generate_content(prompt)
+                    st.markdown("<div class='ai-question-box'>", unsafe_allow_html=True)
+                    st.markdown("### 📝 Generated Question")
+                    st.markdown(response.text)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"❌ Error generating question: {e}")
+
+# ==========================================
+# PAGE 7: USER MANAGEMENT
 # ==========================================
 elif selected == "User Management":
     st.header("⚙️ User Management & Security")
