@@ -462,11 +462,23 @@ elif selected == "Doubt Generator":
     st.header("🤖 Auto Doubt Generator")
     with st.expander("⚙️ Upload & Config", expanded=True):
         generator_class_file = st.file_uploader("Upload Class Timetable (Excel)", type=["xlsx", "xls"], key="gen_class")
-        teacher_input = st.text_area("Enter Faculty Names (Comma Separated)", height=100)
+        
+        input_method = st.radio(
+            "How should we select teachers for doubt slots?", 
+            ["Auto-detect all faculty from timetable", "Enter specific faculty names manually"]
+        )
+        
+        teacher_input = ""
+        if input_method == "Enter specific faculty names manually":
+            teacher_input = st.text_area("Enter Faculty Names (Comma Separated, e.g., RDS, AA, SKC)", height=100)
     
     if st.button("✨ Generate Schedule", type="primary"):
-        if generator_class_file is not None and teacher_input:
-            with st.spinner("Generating conflict-free schedule..."):
+        if generator_class_file is None:
+            st.error("Please upload the Class Timetable Excel file.")
+        elif input_method == "Enter specific faculty names manually" and not teacher_input.strip():
+            st.error("Please enter at least one faculty code.")
+        else:
+            with st.spinner("Crunching the timetable and running conflict algorithms..."):
                 df_class = pd.read_excel(generator_class_file, sheet_name=0, keep_default_na=False)
                 days_map = {"Monday": 1, "Tuesday": 9, "Wednesday": 17, "Thursday": 26, "Friday": 34, "Saturday": 42}
                 
@@ -476,45 +488,57 @@ elif selected == "Doubt Generator":
                     val = str(row.iloc[col]).strip()
                     return (val != '' and val.lower() != 'nan')
 
-                target_teachers = [t.strip() for t in teacher_input.split(",") if t.strip()]
-                generated_doubts = []
+                if input_method == "Auto-detect all faculty from timetable":
+                    raw_teachers = df_class.iloc[2:, 0].dropna().astype(str).str.strip().unique()
+                    target_teachers = [t for t in raw_teachers if t and t.lower() not in ['nan', 'teacher', "teacher's name"]]
+                else:
+                    target_teachers = [t.strip() for t in teacher_input.split(",") if t.strip()]
 
-                for teacher in target_teachers:
-                    teacher_idx = df_class[df_class.iloc[:, 0] == teacher].index
-                    teacher_schedule = {"Teacher": teacher}
-                    row = df_class.iloc[teacher_idx[0], :] if not teacher_idx.empty else pd.Series([''] * 50)
+                if not target_teachers:
+                    st.error("No valid faculty names were found. Please check your file or input.")
+                else:
+                    generated_doubts = []
 
-                    for day, start_col in days_map.items():
-                        c0 = has_class(row, start_col, 0)
-                        c1 = has_class(row, start_col, 1)
-                        c2 = has_class(row, start_col, 2)
-                        c3 = has_class(row, start_col, 3)
-                        c4 = has_class(row, start_col, 4)
-                        c5 = has_class(row, start_col, 5)
-                        c6 = has_class(row, start_col, 6)
-                        c7 = has_class(row, start_col, 7)
+                    for teacher in target_teachers:
+                        teacher_idx = df_class[df_class.iloc[:, 0] == teacher].index
+                        teacher_schedule = {"Teacher": teacher}
+                        row = df_class.iloc[teacher_idx[0], :] if not teacher_idx.empty else pd.Series([''] * 50)
+
+                        for day, start_col in days_map.items():
+                            c0 = has_class(row, start_col, 0)
+                            c1 = has_class(row, start_col, 1)
+                            c2 = has_class(row, start_col, 2)
+                            c3 = has_class(row, start_col, 3)
+                            c4 = has_class(row, start_col, 4)
+                            c5 = has_class(row, start_col, 5)
+                            c6 = has_class(row, start_col, 6)
+                            c7 = has_class(row, start_col, 7)
+                            
+                            class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
+                            d1_avail = not c2  
+                            d2_avail = not (c4 and c5 and c6) 
+                            d3_avail = not c6  
+                            
+                            doubts_needed = max(0, 5 - class_count)
+                            if class_count == 0: doubts_needed = 3
+                            
+                            preference = []
+                            if d2_avail: preference.append("D2")
+                            if d3_avail: preference.append("D3")
+                            if d1_avail: preference.append("D1")
+                            
+                            assigned_doubts = sorted(preference[:doubts_needed])
+                            teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else "None"
+                        generated_doubts.append(teacher_schedule)
                         
-                        class_count = sum([c0, c1, c2, c3, c4, c5, c6, c7])
-                        d1_avail = not c2  
-                        d2_avail = not (c4 and c5 and c6) 
-                        d3_avail = not c6  
-                        
-                        doubts_needed = max(0, 5 - class_count)
-                        if class_count == 0: doubts_needed = 3
-                        
-                        preference = []
-                        if d2_avail: preference.append("D2")
-                        if d3_avail: preference.append("D3")
-                        if d1_avail: preference.append("D1")
-                        
-                        assigned_doubts = sorted(preference[:doubts_needed])
-                        teacher_schedule[day] = ", ".join(assigned_doubts) if assigned_doubts else "None"
-                    generated_doubts.append(teacher_schedule)
+                    df_gen = pd.DataFrame(generated_doubts)
+                    st.session_state["df_doubt_gen"] = df_gen
                     
-                df_gen = pd.DataFrame(generated_doubts)
-                st.session_state["df_doubt_gen"] = df_gen
-            st.success("✨ Process Complete!")
-            st.dataframe(df_gen, use_container_width=True)
+                    st.success(f"✨ Process Complete! Generated schedule for {len(target_teachers)} faculty members.")
+                    st.dataframe(df_gen, use_container_width=True)
+
+                    csv = df_gen.to_csv(index=False).encode('utf-8')
+                    st.download_button("📥 Download Generated Doubt Timetable (CSV)", csv, "MatrixNet_Generated_Doubt_Schedule.csv", "text/csv")
 
 # ==========================================
 # PAGE 4: TEACHER DASHBOARD
