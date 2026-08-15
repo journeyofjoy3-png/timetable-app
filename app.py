@@ -349,19 +349,22 @@ if selected == "Timetable Analyzer":
         else:
             with st.spinner("🤖 Processing Timetables..." if not is_image else "🤖 AI is reading the image... This may take a minute."):
                 if is_image:
-                    df_raw_class = extract_timetable_from_image(class_file, ai_api_key)
+                    df_raw_class = extract_timetable_from_image(class_file, ai_api_key.strip())
                     df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(df_raw_class, is_ai_format=True)
                 else:
                     df_raw_class = pd.read_excel(class_file, sheet_name=0, keep_default_na=False)
                     df_tidy, class_teacher_stats, total_teachers, total_class_slots = parse_class_timetable(df_raw_class, is_ai_format=False)
                 
                 doubt_slots_map, total_doubt_slots = {}, 0
-                if mode == "Class + Doubt Timetables" and doubt_file is not None: doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
+                if mode == "Class + Doubt Timetables" and doubt_file is not None: 
+                    doubt_slots_map, total_doubt_slots = parse_doubt_timetable(doubt_file)
+                
                 summary_rows = []
                 for teacher, info in class_teacher_stats.items():
                     class_lecs, doubt_lecs, effective_capacity = info['Total_Classes'], doubt_slots_map.get(teacher, 0), info['Effective_Capacity']
                     total_workload, final_free_slots = class_lecs + doubt_lecs, max(0, effective_capacity - (class_lecs + doubt_lecs))
                     summary_rows.append({'Teacher': teacher, 'Class Lectures': class_lecs, 'Doubt Slots': doubt_lecs, 'Total Workload': total_workload, 'Leave / Off Days': info['Leave_Days'], 'Leave Days Count': info['Leave_Count'], 'Effective Capacity': effective_capacity, 'Net Free Slots': final_free_slots, 'True Class Util.': class_lecs / effective_capacity if effective_capacity > 0 else 0, 'True Total Util.': total_workload / effective_capacity if effective_capacity > 0 else 0, 'Status': info['Status']})
+                
                 df_summary = pd.DataFrame(summary_rows).sort_values(by='Total Workload', ascending=False)
                 st.session_state["df_summary_cached"] = df_summary
                 
@@ -375,14 +378,16 @@ if selected == "Timetable Analyzer":
             st.divider()
             st.markdown("##### 💾 Save to Historical Database")
             sc1, sc2 = st.columns([3, 1])
-            with sc1: week_label = st.text_input("Timetable Label (e.g., 'Week of Aug 10')", placeholder="Week of Aug 10 - Aug 15")
+            with sc1: 
+                week_label = st.text_input("Timetable Label (e.g., 'Week of Aug 10')", placeholder="Week of Aug 10 - Aug 15")
             with sc2:
                 st.write(""); st.write("")
                 if st.button("Save to Archive", use_container_width=True):
                     if week_label:
                         save_to_db(df_summary, week_label)
                         st.success(f"Data saved to database under '{week_label}'!"); st.toast("Saved to History!", icon="💾")
-                    else: st.error("Please provide a week label to save.")
+                    else: 
+                        st.error("Please provide a week label to save.")
                         
             st.divider()
             st.markdown("##### 📊 Workload Distribution (Top 15 Busiest)")
@@ -393,6 +398,63 @@ if selected == "Timetable Analyzer":
             st.markdown("##### 📋 Faculty Workload Summary Table")
             display_df = df_summary.drop(columns=['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload']) if mode == "Class Timetable Only" else df_summary.drop(columns=['Leave Days Count'])
             st.dataframe(display_df.style.format({'True Class Util.': '{:.1%}', 'True Total Util.': '{:.1%}'}), use_container_width=True)
+
+            # --- Detailed Batch-Wise Mapping & Download ---
+            with st.expander("🔍 View Detailed Batch-wise Mapping", expanded=False):
+                st.dataframe(df_tidy, use_container_width=True)
+
+            def generate_analysis_excel(summary_df, detail_df, app_mode):
+                wb = Workbook()
+                header_font = Font(bold=True, color="FFFFFF")
+                header_fill = PatternFill("solid", fgColor="1E293B")
+                center_align = Alignment(horizontal="center", vertical="center")
+                border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+                
+                # Sheet 1: Summary
+                ws_summary = wb.active
+                ws_summary.title = "Workload & True Utilization"
+                cols_to_drop = ['Leave Days Count', 'Doubt Slots', 'True Total Util.', 'Total Workload'] if app_mode == "Class Timetable Only" else ['Leave Days Count']
+                df_export = summary_df.drop(columns=cols_to_drop)
+                for r in dataframe_to_rows(df_export, index=False, header=True): 
+                    ws_summary.append(r)
+                
+                for cell in ws_summary[1]: 
+                    cell.font, cell.fill, cell.alignment = header_font, header_fill, center_align
+                for row in ws_summary.iter_rows(min_row=2, max_row=ws_summary.max_row, min_col=1, max_col=ws_summary.max_column):
+                    for cell in row: 
+                        cell.border, cell.alignment = border, center_align
+                for col in ws_summary.columns:
+                    max_len = max([len(str(c.value)) for c in col if c.value] + [0])
+                    ws_summary.column_dimensions[col[0].column_letter].width = max_len + 4
+
+                # Sheet 2: Detailed Mapping
+                ws_detail = wb.create_sheet(title="Detailed Class Mapping")
+                for r in dataframe_to_rows(detail_df, index=False, header=True): 
+                    ws_detail.append(r)
+                
+                for cell in ws_detail[1]: 
+                    cell.font, cell.fill, cell.alignment = header_font, header_fill, center_align
+                for row in ws_detail.iter_rows(min_row=2, max_row=ws_detail.max_row, min_col=1, max_col=ws_detail.max_column):
+                    for cell in row: 
+                        cell.border, cell.alignment = border, center_align
+                for col in ws_detail.columns:
+                    max_len = max([len(str(c.value)) for c in col if c.value] + [0])
+                    ws_detail.column_dimensions[col[0].column_letter].width = max_len + 4
+
+                output = BytesIO()
+                wb.save(output)
+                output.seek(0)
+                return output
+
+            st.write("")
+            excel_file = generate_analysis_excel(df_summary, df_tidy, mode)
+            st.download_button(
+                label="📥 Download Complete Excel Analysis Report", 
+                data=excel_file, 
+                file_name="MatrixNet_Faculty_Analysis.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                type="primary"
+            )
 
 # ==========================================
 # PAGE 2: SCHEDULE CALCULATOR 
@@ -453,14 +515,18 @@ elif selected == "Doubt Generator":
     if st.button("✨ Generate Schedule", type="primary"):
         is_image = generator_class_file is not None and generator_class_file.name.lower().endswith(('png', 'jpg', 'jpeg'))
         
-        if generator_class_file is None: st.error("Please upload the Class Timetable file.")
-        elif is_image and not ai_api_key: st.error("🔑 Please enter your Gemini API Key in the sidebar to process images.")
-        elif input_method == "Enter specific faculty names manually" and not teacher_input.strip(): st.error("Please enter at least one faculty code.")
-        elif input_method == "Upload Subject Mapping Excel (Teacher & Subject columns)" and mapping_file is None: st.error("Please upload the Teacher-Subject mapping Excel file.")
+        if generator_class_file is None: 
+            st.error("Please upload the Class Timetable file.")
+        elif is_image and not ai_api_key: 
+            st.error("🔑 Please enter your Gemini API Key in the sidebar to process images.")
+        elif input_method == "Enter specific faculty names manually" and not teacher_input.strip(): 
+            st.error("Please enter at least one faculty code.")
+        elif input_method == "Upload Subject Mapping Excel (Teacher & Subject columns)" and mapping_file is None: 
+            st.error("Please upload the Teacher-Subject mapping Excel file.")
         else:
             with st.spinner("🤖 AI is reading the image..." if is_image else "Crunching the timetable..."):
                 if is_image:
-                    df_class = extract_timetable_from_image(generator_class_file, ai_api_key)
+                    df_class = extract_timetable_from_image(generator_class_file, ai_api_key.strip())
                     is_ai_format = True
                 else:
                     df_class = pd.read_excel(generator_class_file, sheet_name=0, keep_default_na=False)
@@ -640,7 +706,7 @@ elif selected == "Question Generator":
             st.warning("⚠️ Please fill in at least the Chapter and Topic fields.")
         else:
             with st.spinner("🤖 NTA Expert AI is crafting a unique question..."):
-                genai.configure(api_key=ai_api_key)
+                genai.configure(api_key=ai_api_key.strip())
                 
                 prompt = f"""
                 Act as an expert NTA (National Testing Agency) paper setter for the NEET-UG examination. Your task is to generate a highly unique, conceptual, and zero-repetition Multiple Choice Question (MCQ) based on the parameters provided below.
@@ -680,13 +746,15 @@ elif selected == "Question Generator":
                 
                 try:
                     response = None
+                    last_error = ""
                     for model_name in ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-pro']:
                         try:
                             model = genai.GenerativeModel(model_name)
                             response = model.generate_content(prompt)
                             if response and response.text:
                                 break
-                        except Exception:
+                        except Exception as e:
+                            last_error = str(e)
                             continue
                             
                     if response and response.text:
@@ -695,9 +763,11 @@ elif selected == "Question Generator":
                         st.markdown(response.text)
                         st.markdown("</div>", unsafe_allow_html=True)
                     else:
-                        st.error("❌ Could not generate question with available Gemini models. Please check your API key.")
+                        st.error("❌ API Request Failed.")
+                        st.code(f"Google Server Error Details:\n{last_error}")
+                        st.info("💡 Make sure you pasted the exact API key with no extra spaces. If the error says 'API_KEY_INVALID' or '403', try generating a new key from Google AI Studio.")
                 except Exception as e:
-                    st.error(f"❌ Error generating question: {e}")
+                    st.error(f"❌ System Error: {e}")
 
 # ==========================================
 # PAGE 7: USER MANAGEMENT
