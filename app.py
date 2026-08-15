@@ -80,7 +80,8 @@ def save_to_db(df, week_label):
 # --- AI Image Parsing Logic ---
 def extract_timetable_from_image(image_file, api_key):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-pro') 
+    # Using the fast & highly capable 1.5-flash model
+    model = genai.GenerativeModel('gemini-1.5-flash') 
     img = Image.open(image_file)
     
     prompt = """
@@ -523,7 +524,7 @@ elif selected == "Teacher Dashboard":
         st.info("💡 Please upload a timetable in the Analyzer menu first.")
 
 # ==========================================
-# PAGE 5: HISTORICAL ANALYTICS
+# PAGE 5: HISTORICAL Analytics
 # ==========================================
 elif selected == "Historical Analytics":
     st.header("📈 Historical Workload Analytics")
